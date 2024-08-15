@@ -1,4 +1,4 @@
-name: ACDM
+name: acdm
 channels:
   - defaults
   - pytorch
