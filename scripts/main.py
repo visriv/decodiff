@@ -22,6 +22,7 @@ from omegaconf import OmegaConf
 import wandb
 import gc
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {

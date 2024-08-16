@@ -162,7 +162,7 @@ class Unet(nn.Module):
         init_dim = init_dim if init_dim is not None else dim // 3 * 2
         self.init_conv = nn.Conv2d(channels, init_dim, 7, padding=3)
 
-        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+        dims = [init_dim, *map(lambda m: int(dim * m), dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
         if use_convnext:

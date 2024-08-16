@@ -46,11 +46,38 @@ class DiffusionModel(nn.Module):
         self.register_buffer("sqrtOneMinusAlphasCumprod", sqrtOneMinusAlphasCumprod)
         self.register_buffer("sqrtPosteriorVariance", sqrtPosteriorVariance)
 
+        dim = 128
+        time_dim = 128 * 2
+
+        self.time_mlp = nn.Sequential(
+                SinusoidalPositionEmbeddings(dim),
+                nn.Linear(dim, time_dim),
+                nn.GELU(),
+                nn.Linear(time_dim, time_dim),
+            )
+        
+
+        self.weight_network = nn.Sequential(
+            nn.Linear(time_dim, int(time_dim/2)),
+            nn.ReLU(),
+            nn.Linear(int(time_dim/2), 2),
+            nn.Softmax(dim=-1)  # Ensure weights sum to 1
+        )
+
         # backbone model
-        self.unet = Unet(
+        self.unet1 = Unet(
             dim=128,
             channels= condChannels + dataChannels,
             dim_mults=(1,1,1),
+            use_convnext=True,
+            convnext_mult=1,
+        )
+
+        # second branch 
+        self.unet2 = Unet(
+            dim=128,
+            channels= condChannels + dataChannels,
+            dim_mults=(0.25,1),
             use_convnext=True,
             convnext_mult=1,
         )
@@ -75,7 +102,11 @@ class DiffusionModel(nn.Module):
             dNoisy = self.sqrtAlphasCumprod[t] * d + self.sqrtOneMinusAlphasCumprod[t] * noise
 
             # noise prediction with network
-            predictedNoise = self.unet(dNoisy, t)
+            predictedNoise = self.unet1(dNoisy, t)
+            t_emb = self.time_mlp(t)
+            weights = self.weight_network(t_emb)
+
+            predictedNoise = weights[:, 0].unsqueeze(1) * self.unet1(dNoisy, t) + weights[:, 1].unsqueeze(1) * self.unet1(dNoisy, t)
 
             # unstack batch and sequence dimension again
             noise = torch.reshape(noise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
@@ -99,7 +130,10 @@ class DiffusionModel(nn.Module):
                 dNoiseCond = torch.concat((condNoisy, dNoise), dim=1)
 
                 # backward diffusion process that removes noise to create data
-                predictedNoiseCond = self.unet(dNoiseCond, t)
+                # predictedNoiseCond = self.unet(dNoiseCond, t)
+
+                # multi scale DM
+                predictedNoiseCond = weights[:, 0].unsqueeze(1) * self.unet1(dNoiseCond, t) + weights[:, 1].unsqueeze(1) * self.unet1(dNoiseCond, t)
 
                 # use model (noise predictor) to predict mean
                 modelMean = self.sqrtRecipAlphas[t] * (dNoiseCond - self.betas[t] * predictedNoiseCond / self.sqrtOneMinusAlphasCumprod[t])

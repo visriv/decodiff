@@ -1,10 +1,10 @@
 # config.yaml
 device: "cuda"  # or "cpu"
 experiment:
-  train: False
+  train: True
   validate: True
   analysis: True
-  run_id: 12
+  run_id: 13
   project: kol
   plot_file_name: 2d_plot
   plot_video: True
@@ -12,7 +12,7 @@ experiment:
   spectral_analysis: spec_analysis
   save_plot_video_path: pred_video
   eval_node: eval_node
-  start_from_checkpoint: True
+  start_from_checkpoint: False
   checkpoint_path: 'runs/kol/12/model_checkpoint_30.pth'  
   # checkpoint_path: 'runs/kol/3/model_checkpoint_88.pth'  
   save_ckpt_every_n_epochs: 3
@@ -46,7 +46,7 @@ training:
   learning_rate: 0.0001
 
 validation:
-  n_val_samples: 5
+  n_val_samples: 1
 
 dataloader:
   num_workers: 2
