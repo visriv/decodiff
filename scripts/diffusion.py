@@ -2,7 +2,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch.utils.checkpoint import checkpoint
+import wandb
+import numpy as np
 
 from network import *
 
@@ -60,9 +62,12 @@ class DiffusionModel(nn.Module):
         self.weight_network = nn.Sequential(
             nn.Linear(time_dim, int(time_dim/2)),
             nn.ReLU(),
-            nn.Linear(int(time_dim/2), 2),
-            nn.Softmax(dim=-1)  # Ensure weights sum to 1
+            nn.Linear(int(time_dim/2), 1)
+            # nn.Softmax(dim=-1)  # Ensure weights sum to 1
         )
+        
+        self.weight_network.apply(self.initialize_weights)
+
 
         # backbone model
         self.unet1 = Unet(
@@ -81,6 +86,12 @@ class DiffusionModel(nn.Module):
             use_convnext=True,
             convnext_mult=1,
         )
+
+    def initialize_weights(self, layer):
+        if isinstance(layer, nn.Linear):
+            nn.init.constant_(layer.weight, 0)  # Initialize weights to zero
+            if layer.bias is not None:
+                nn.init.constant_(layer.bias, 0)  # Initialize biases to zero
 
 
     # input shape (both inputs): B S C W H (D) -> output shape (both outputs): B S nC W H (D)
@@ -102,11 +113,31 @@ class DiffusionModel(nn.Module):
             dNoisy = self.sqrtAlphasCumprod[t] * d + self.sqrtOneMinusAlphasCumprod[t] * noise
 
             # noise prediction with network
-            predictedNoise = self.unet1(dNoisy, t)
             t_emb = self.time_mlp(t)
             weights = self.weight_network(t_emb)
-            
-            predictedNoise = weights[:, 0].unsqueeze(1).unsqueeze(2).unsqueeze(3) * self.unet1(dNoisy, t) + weights[:, 1].unsqueeze(1).unsqueeze(2).unsqueeze(3) * self.unet2(dNoisy, t)
+            wandb.log({'average weight[0]': torch.mean(weights[:,0], dim=0).item(),
+                       'min weight[0]': torch.min(weights[:,0]).item(),
+                       'max weight[0]': torch.max(weights[:,0]).item(),
+                       })
+
+            # Use the unet models and delete the outputs as soon as they are no longer needed
+            unet1_output = checkpoint(self.unet1, dNoisy, t)
+            unet2_output = checkpoint(self.unet2, dNoisy, t)
+
+            # predictedNoise = (
+            #     weights[:].unsqueeze(1).unsqueeze(2).unsqueeze(3) * unet1_output + 
+            #     weights[:].unsqueeze(1).unsqueeze(2).unsqueeze(3) * unet2_output
+            # )
+
+            # predictedNoise = self.unet1(dNoisy, t)
+            predictedNoise = (
+                unet1_output +
+                weights[:].unsqueeze(1).unsqueeze(2) * unet2_output * 0.01
+            )
+
+            # Delete tensors if they are no longer needed
+            del unet1_output, unet2_output
+            torch.cuda.empty_cache()  # Clear the cache if you're on a GPU
 
             # unstack batch and sequence dimension again
             noise = torch.reshape(noise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
