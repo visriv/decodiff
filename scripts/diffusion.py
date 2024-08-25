@@ -77,7 +77,7 @@ class DiffusionModel(nn.Module):
         self.unet2 = Unet(
             dim=128,
             channels= condChannels + dataChannels,
-            dim_mults=(0.25,1),
+            dim_mults=(1,1),
             use_convnext=True,
             convnext_mult=1,
         )
@@ -105,8 +105,8 @@ class DiffusionModel(nn.Module):
             predictedNoise = self.unet1(dNoisy, t)
             t_emb = self.time_mlp(t)
             weights = self.weight_network(t_emb)
-
-            predictedNoise = weights[:, 0].unsqueeze(1) * self.unet1(dNoisy, t) + weights[:, 1].unsqueeze(1) * self.unet1(dNoisy, t)
+            
+            predictedNoise = weights[:, 0].unsqueeze(1).unsqueeze(2).unsqueeze(3) * self.unet1(dNoisy, t) + weights[:, 1].unsqueeze(1).unsqueeze(2).unsqueeze(3) * self.unet2(dNoisy, t)
 
             # unstack batch and sequence dimension again
             noise = torch.reshape(noise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
