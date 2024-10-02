@@ -22,11 +22,15 @@ def linear_beta_schedule(timesteps):
 
 
 class DiffusionModel(nn.Module):
-    def __init__(self, diffusionSteps:int, condChannels:int, dataChannels:int):
+    def __init__(self, 
+                config):
         super(DiffusionModel, self).__init__()
 
-        self.timesteps = diffusionSteps
+        self.timesteps = config.model.diffusion_steps
         betas = linear_beta_schedule(timesteps=self.timesteps)
+        self.data_channels = config.model.data_channels
+        self.cond_channels = config.model.input_steps * self.data_channels
+        self.dim = config.model.dim
 
         betas = betas.unsqueeze(1).unsqueeze(2).unsqueeze(3)
         alphas = 1.0 - betas
@@ -48,31 +52,13 @@ class DiffusionModel(nn.Module):
         self.register_buffer("sqrtOneMinusAlphasCumprod", sqrtOneMinusAlphasCumprod)
         self.register_buffer("sqrtPosteriorVariance", sqrtPosteriorVariance)
 
-        dim = 128
-        time_dim = 128 * 2
 
-        self.time_mlp = nn.Sequential(
-                SinusoidalPositionEmbeddings(dim),
-                nn.Linear(dim, time_dim),
-                nn.GELU(),
-                nn.Linear(time_dim, time_dim),
-            )
-        
-
-        self.weight_network = nn.Sequential(
-            nn.Linear(time_dim, int(time_dim/2)),
-            nn.ReLU(),
-            nn.Linear(int(time_dim/2), 1)
-            # nn.Softmax(dim=-1)  # Ensure weights sum to 1
-        )
-        
-        self.weight_network.apply(self.initialize_weights)
 
 
         # backbone model
         self.unet1 = Unet(
-            dim=128,
-            channels= condChannels + dataChannels,
+            dim=self.dim,
+            channels= self.cond_channels + self.data_channels,
             dim_mults=(1,1,1),
             use_convnext=True,
             convnext_mult=1,
@@ -80,18 +66,25 @@ class DiffusionModel(nn.Module):
 
         # second branch 
         self.unet2 = Unet(
-            dim=128,
-            channels= condChannels + dataChannels,
+            dim=self.dim,
+            channels= self.cond_channels + self.data_channels,
             dim_mults=(1,1),
             use_convnext=True,
             convnext_mult=1,
         )
 
-    def initialize_weights(self, layer):
-        if isinstance(layer, nn.Linear):
-            nn.init.constant_(layer.weight, 0)  # Initialize weights to zero
-            if layer.bias is not None:
-                nn.init.constant_(layer.bias, 0)  # Initialize biases to zero
+        self.FusionModule = FusionModule(config)
+        # Load weights for net1 if a path is provided
+        # if net1_weights_path is not None:
+        #     self.net1.load_state_dict(torch.load(net1_weights_path))
+        #     print("Loaded net1 weights from:", net1_weights_path)
+
+
+        # # Freeze the parameters of net1
+        # for param in self.net1.parameters():
+        #     param.requires_grad = False
+
+
 
 
     # input shape (both inputs): B S C W H (D) -> output shape (both outputs): B S nC W H (D)
@@ -111,18 +104,14 @@ class DiffusionModel(nn.Module):
             noise = torch.randn_like(d, device=device)
             t = torch.randint(0, self.timesteps, (d.shape[0],), device=device).long()
             dNoisy = self.sqrtAlphasCumprod[t] * d + self.sqrtOneMinusAlphasCumprod[t] * noise
+ 
 
-            # noise prediction with network
-            t_emb = self.time_mlp(t)
-            weights = self.weight_network(t_emb)
-            wandb.log({'average weight[0]': torch.mean(weights[:,0], dim=0).item(),
-                       'min weight[0]': torch.min(weights[:,0]).item(),
-                       'max weight[0]': torch.max(weights[:,0]).item(),
-                       })
+
 
             # Use the unet models and delete the outputs as soon as they are no longer needed
-            unet1_output = checkpoint(self.unet1, dNoisy, t)
-            unet2_output = checkpoint(self.unet2, dNoisy, t)
+            # unet1_output = checkpoint(self.unet1, dNoisy, t)
+            # unet2_output = checkpoint(self.unet2, dNoisy, t)
+            
 
             # predictedNoise = (
             #     weights[:].unsqueeze(1).unsqueeze(2).unsqueeze(3) * unet1_output + 
@@ -130,10 +119,11 @@ class DiffusionModel(nn.Module):
             # )
 
             # predictedNoise = self.unet1(dNoisy, t)
-            predictedNoise = (
-                unet1_output +
-                weights[:].unsqueeze(1).unsqueeze(2) * unet2_output * 0.01
-            )
+
+            unet1_output = self.unet1(dNoisy, t)
+            unet2_output = self.unet2(dNoisy, t)
+            predictedNoise = self.FusionModule(unet1_output, unet2_output, t)
+
 
             # Delete tensors if they are no longer needed
             del unet1_output, unet2_output
@@ -161,10 +151,17 @@ class DiffusionModel(nn.Module):
                 dNoiseCond = torch.concat((condNoisy, dNoise), dim=1)
 
                 # backward diffusion process that removes noise to create data
-                # predictedNoiseCond = self.unet(dNoiseCond, t)
 
-                # multi scale DM
-                predictedNoiseCond = weights[:, 0].unsqueeze(1) * self.unet1(dNoiseCond, t) + weights[:, 1].unsqueeze(1) * self.unet1(dNoiseCond, t)
+                unet1_output = self.unet1(dNoiseCond, t)
+                unet2_output = self.unet2(dNoiseCond, t)
+                predictedNoiseCond = self.FusionModule(unet1_output, unet2_output, t)
+
+
+                # Delete tensors if they are no longer needed
+                del unet1_output, unet2_output
+                torch.cuda.empty_cache()  # Clear the cache if you're on a GPU
+
+
 
                 # use model (noise predictor) to predict mean
                 modelMean = self.sqrtRecipAlphas[t] * (dNoiseCond - self.betas[t] * predictedNoiseCond / self.sqrtOneMinusAlphasCumprod[t])
@@ -178,3 +175,75 @@ class DiffusionModel(nn.Module):
             dNoise = torch.reshape(dNoise, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
 
             return dNoise
+
+
+class FusionModule(nn.Module):
+    def __init__(self, config):
+        super(FusionModule, self).__init__()
+        self.strategy = config.model.fusion_strategy
+        self.time_dim = config.model.time_dim
+        self.dim = config.model.dim
+
+        if self.strategy == "cross_attention":
+            self.num_heads = config.model.fusion_params.num_heads
+            self.embed_dim = config.model.fusion_params.embed_dim
+            self.query_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.key_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.value_proj = nn.Linear(self.embed_dim, self.embed_dim)
+            self.attn = nn.MultiheadAttention(self.embed_dim, self.num_heads)
+            
+            
+        elif self.strategy == "add":
+            self.weight_network = nn.Sequential(
+                                    nn.Linear(self.time_dim, int(self.time_dim/2)),
+                                    nn.ReLU(),
+                                    nn.Linear(int(self.time_dim/2), 1)
+                                    # nn.Softmax(dim=-1)  # Ensure weights sum to 1
+                                    )
+        
+            self.weight_network.apply(self.initialize_weights)
+
+            # Add other necessary modules as per strategy
+
+            self.time_mlp = nn.Sequential(
+                        SinusoidalPositionEmbeddings(self.dim),
+                        nn.Linear(self.dim, self.time_dim),
+                        nn.GELU(),
+                        nn.Linear(self.time_dim, self.time_dim),
+                    )
+    
+    def forward(self, x1, x2, t):
+        if self.strategy == "add":
+            # Element-wise addition
+            t_emb = self.time_mlp(t)
+            weights = self.weight_network(t_emb)
+            return x1 + weights[:].unsqueeze(1).unsqueeze(2) * x2 * 0.01
+        
+        elif self.strategy == "cross_attention":
+            # Reshape feature maps to (H*W, B, CT) for attention mechanism
+            # print('shape of input to fusion layer:', x1.size())
+
+            B, C, H, W = x1.size()
+            x1 = x1.view(B, C, -1).permute(2, 0, 1)  # (H*W, B, C)
+            x2 = x2.view(B, C, -1).permute(2, 0, 1)  # (H*W, B, C)
+            
+            # Project queries, keys, and values for cross-attention
+            query = self.query_proj(x1)  # (H*W, B, C)
+            key = self.key_proj(x2)      # (H*W, B, C)
+            value = self.value_proj(x2)  # (H*W, B, C)
+            
+            # Apply multi-head attention
+            attn_output, _ = self.attn(query, key, value)
+            
+            # Reshape the attention output back to (B, C, H, W)
+            fused_output = attn_output.permute(1, 2, 0).view(B, C, H, W)
+
+            return fused_output
+        else:
+            raise ValueError(f"Unknown fusion strategy: {self.strategy}")
+
+    def initialize_weights(self, layer):
+        if isinstance(layer, nn.Linear):
+            nn.init.constant_(layer.weight, 0)  # Initialize weights to zero
+            if layer.bias is not None:
+                nn.init.constant_(layer.bias, 0)  # Initialize biases to zero

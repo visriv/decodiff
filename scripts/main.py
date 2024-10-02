@@ -22,7 +22,7 @@ from omegaconf import OmegaConf
 import wandb
 import gc
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {
@@ -48,7 +48,8 @@ def load_checkpoint(model, optimizer, epoch):
 wandb.init(project="diffore", entity="visriv")
 
 # Load configuration from YAML file
-config = OmegaConf.load('/home/autoreg-pde-diffusion/scripts/kol.yaml')
+
+config = OmegaConf.load('/home/users/nus/e1333861/autoreg-pde-diffusion/scripts/kol_small.yaml')
 
 device = config.device if torch.cuda.is_available() else "cpu"
 print("Training device: %s" % device)
@@ -97,9 +98,9 @@ train_loader = DataLoader(
 # model definition
 data_channels = config.model.data_channels
 cond_channels = config.model.input_steps * data_channels #2 * (2 + len(sim_fields) + len(sim_params))
+fusion_strategy = config.model.fusion_strategy
 
-
-model = DiffusionModel(diffusion_steps, cond_channels, data_channels)
+model = DiffusionModel(config)
 
 if start_from_checkpoint:
     # load weights from checkpoint

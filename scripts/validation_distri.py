@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, SequentialSampler, RandomSampler
+from torch.utils.data import Dataset, DataLoader, SequentialSampler, RandomSampler, DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from einops import rearrange
 from functools import partial
@@ -72,31 +73,7 @@ def visualize(pred, gt, config, save_dir, epoch):
                 field) 
 
  
-
-
-
-
-def validation_step(model, config, save_dir, epoch):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    numSamples = 1
-
-    diffusionSteps = config.model.diffusion_steps
-
-    try: # load model if not trained/finetuned above
-        model
-    except NameError:
-        data_channels = config.model.data_channels
-        cond_channels = config.model.input_steps * data_channels #2 * (2 + len(sim_fields) + len(sim_params))
-
-        model = DiffusionModel(diffusionSteps, cond_channels, data_channels)
-
-        # load weights from checkpoint
-        loaded = torch.load(config.experiment.checkpoint_path, map_location=torch.device('cpu'))
-        model.load_state_dict(loaded["stateDictDecoder"])
-    model.eval()
-    model.to(device)
-
+def get_validation_dataloader(batch_size, rank, world_size, config):
     test_set = kolTorchDataset(
                 split= "val",                 
                 data_path = config.data.data_dirs,
@@ -106,27 +83,62 @@ def validation_step(model, config, save_dir, epoch):
                 val_ratio = config.data.val_ratio,
                 standardize=True,
                 crop=config.data.crop)
+    sampler = DistributedSampler(test_set, num_replicas=world_size, rank=rank, shuffle=False)
+    dataloader = DataLoader(test_set, batch_size=1, sampler=sampler)
+    return dataloader
+
+
+
+
+
+def validation_step(model, config, rank, save_dir, epoch):
+    world_size = torch.cuda.device_count()
+
+    if rank != 0:
+        return  # Only the main process performs validation
+    print(f"Process {rank}: Starting validation at epoch {epoch}")
+
+    if config.experiment.train == False:
+        model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    numSamples = 1
+
     
+    try: # load model if not trained/finetuned above
+        model
+    except NameError:
+        
+        model = DiffusionModel(config)
+
+        # load weights from checkpoint
+        loaded = torch.load(config.experiment.checkpoint_path, map_location=torch.device('cpu'))
+        model.load_state_dict(loaded["stateDictDecoder"])
+    
+    model.to(rank)
+    model.eval()
+    val_loader = get_validation_dataloader(config.training.batch_size, rank, world_size, config)
+   
 
 
-    testSampler = SequentialSampler(test_set)
-    testLoader = DataLoader(test_set, sampler=testSampler, batch_size=1, drop_last=False)
 
     # sampling loop
     print("\nStarting sampling...")
     gt = []
     pred = []
     with torch.no_grad():
-        for s, sample in enumerate(testLoader, 0):
+        for s, sample in enumerate(val_loader, 0):
             if (s == config.validation.n_val_samples):
                 break
-            sample = rearrange(sample, 'b t h w c -> b t c h w')
+            sample = rearrange(sample, 'b t h w c -> b t c h w').to(rank)
             print('sample shape from testLoader:', sample.unsqueeze(0).cpu().numpy().shape)
             gt += [sample.unsqueeze(0).cpu().numpy()]
-            d = sample.to(device).repeat(numSamples,1,1,1,1) # reuse batch dim for samples
+            d = sample.to(rank).repeat(numSamples,1,1,1,1) # reuse batch dim for samples
             print('d shape from testLoader:', d.shape)
 
-            prediction = torch.zeros_like(d, device=device)
+            prediction = torch.zeros_like(d, device=rank)
             inputSteps = config.model.input_steps
 
             for i in range(inputSteps): # no prediction of first steps
@@ -141,14 +153,20 @@ def validation_step(model, config, save_dir, epoch):
 
                 result = model(conditioning=cond, data=d[:,i-1:i]) # auto-regressive inference
                 
-                
+                print(prediction.size(), len(result), result.shape,  cond.shape)
+                print(type(prediction), type(result))
+                # print(result[0], result[1])
                 # result[:,:,-len(simParams):] = d[:,i:i+1,-len(simParams):] # replace simparam prediction with true values
-                print('shape of result from model(): [len(result), result[0].shape]', len(result), result[0].shape)
-                prediction[:,i:i+1] = result
+                prediction[:,i:i+1] = result.to(rank)
 
             prediction = torch.reshape(prediction, (numSamples, -1, d.shape[1], d.shape[2], d.shape[3], d.shape[4]))
             pred += [prediction.cpu().numpy()]
             print("  Sequence %d finished" % s)
+            
+            del prediction, sample, d, result, cond
+            torch.cuda.empty_cache()
+
+
 
     # Clear CUDA memory
     torch.cuda.empty_cache()
@@ -200,5 +218,9 @@ def validation_step(model, config, save_dir, epoch):
                'roll_val_mae': roll_val_mae
                 })
     
+    del roll_val_mse, roll_val_mae
+    
     visualize(pred, gt, config, save_dir, epoch)
+
+    model.train()
     return pred, gt

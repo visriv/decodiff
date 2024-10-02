@@ -15,8 +15,8 @@ experiment:
   start_from_checkpoint: False
   checkpoint_path: 'runs/kol/15/model_checkpoint_45.pth'  
   # checkpoint_path: 'runs/kol/3/model_checkpoint_88.pth'  
-  save_ckpt_every_n_epochs: 5
-  val_every_n_epochs: 10
+  save_ckpt_every_n_epochs: 1
+  val_every_n_epochs: 1
 
 training:
   batch_size: 2
@@ -30,7 +30,7 @@ data:
   mode: "Training"
   data_dirs: "/home/users/nus/e1333861/autoreg-pde-diffusion/data/kol/results_2.h5"
   total_seq_len: 10
-  rollout_total_seq_len: 600
+  rollout_total_seq_len: 15
   val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio
   train_ratio: 0.8
   val_ratio: 0.15
