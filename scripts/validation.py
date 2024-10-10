@@ -8,13 +8,13 @@ from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 
-
-from network import *
-from diffusion import *
-from dataloader import *
-from kol_dataloader import kolTorchDataset
+from src.model.network import *
+from src.model.diffusion import *
+# from dataloader import *
+from src.kol_dataloader import kolTorchDataset
 
 import gc
 import matplotlib.animation as animation
@@ -42,25 +42,46 @@ def visualize(pred, gt, config, save_dir, epoch):
     field = 0 # velocity_x (0), velocity_y (1), density (2), or pressure (3)
 
     predPart = pred[samples]
-    gtPred = np.concatenate([gt[:,sequence,timeSteps,field], predPart[:,sequence,timeSteps,field]])
+
+    mae = np.abs(gt - predPart)
+    print(mae.shape)
+    gtPredMae = np.concatenate([gt[:,sequence,timeSteps,field], 
+                             predPart[:,sequence,timeSteps,field],
+                             mae[:,sequence,timeSteps,field]])
+    
+    # for t in range(gt.shape[2]):
+    #     # Extract the slices for the current timestamp
+    #     tensor1_t = torch.from_numpy(gt[0,0,t,0,:,:])
+    #     tensor2_t = torch.from_numpy(pred[0,0,t,0,:,:])
+        
+    #     # Compute MSE and MAE for the current timestamp
+    #     mse_t = F.mse_loss(tensor1_t, tensor2_t)
+    #     mae_t = F.l1_loss(tensor1_t, tensor2_t)
+
+
     print('gt concat shape:', gt[:,sequence,timeSteps,field].shape)
     print('predPart concat shape:', predPart[:,sequence,timeSteps,field].shape)
-    print('gtPred shape:', gtPred.shape)
+    print('gtPredMae shape:', gtPredMae.shape)
 
-    fig, axs = plt.subplots(nrows=gtPred.shape[0], ncols=gtPred.shape[1], figsize=(gtPred.shape[1]*1.9, gtPred.shape[0]), dpi=150, squeeze=False)
+    fig, axs = plt.subplots(nrows=gtPredMae.shape[0], ncols=gtPredMae.shape[1], figsize=(gtPredMae.shape[1]*1.9, gtPredMae.shape[0]), dpi=150, squeeze=False)
 
-    for i in range(gtPred.shape[0]):
-        for j in range(gtPred.shape[1]):
-            if i == gtPred.shape[0]-1:
+    for i in range(gtPredMae.shape[0]):
+        for j in range(gtPredMae.shape[1]):
+            if i == gtPredMae.shape[0]-1:
                 axs[i,j].set_xlabel("$t=%s$" % (timeSteps[j]+1), fontsize=10)
             if j == 0:
                 if i == 0:
                     axs[i,j].set_ylabel("Ground\nTruth", fontsize=10)
+                elif i == gtPredMae.shape[0]-1:
+                    axs[i,j].set_ylabel("Mean Absolute\nError", fontsize=10)
                 else:
                     axs[i,j].set_ylabel("ACDM\nSample %d" % i, fontsize=10)
             axs[i,j].set_xticks([])
             axs[i,j].set_yticks([])
-            im = axs[i,j].imshow(gtPred[i][j], interpolation="catrom", cmap="RdBu_r")
+            im = axs[i,j].imshow(gtPredMae[i][j], interpolation="catrom", cmap="RdBu_r")
+
+    cbar = fig.colorbar(im, ax=axs, orientation='vertical', fraction=0.02, pad=0.04)
+    cbar.set_label('velocity component', fontsize=10)
 
     fig.savefig(os.path.join(save_dir, config.experiment.plot_file_name) + '_{}.png'.format(epoch))
     plt.show()
@@ -70,6 +91,90 @@ def visualize(pred, gt, config, save_dir, epoch):
                 field) 
         animate(pred, os.path.join(save_dir, 'pred_' +config.experiment.save_plot_video_path) + '_.mp4',
                 field) 
+
+    # now plot the spatial frequency spectrum
+    print('plotting the spatial spectrum')
+
+
+    # Assuming gt and pred are numpy arrays of shape [1, 1, T, 1, H, W]
+    # Extract the relevant dimensions (T, H, W)
+    np.save(os.path.join(save_dir, 'gtNpy.npy'), gt )
+    np.save(os.path.join(save_dir, 'predNpy.npy'), pred )
+
+    T = gt.shape[2]
+    H, W = gt.shape[4], gt.shape[5]
+
+    fig_new, axs_new = plt.subplots(nrows=4, ncols=T, figsize=(T * 5, 4 * 3), dpi=150, squeeze=False)
+
+    # Loop through each timestamp to calculate and plot the amplitude vs. wavenumber
+    for t in range(T):
+        # Extract gt and pred arrays at timestamp t
+        gt_t = gt[0, 0, t, 0, :, :]
+        pred_t = pred[0, 0, t, 0, :, :]
+        
+        # Calculate the 2D Fourier transforms for gt and pred
+        fft_gt = np.fft.fft2(gt_t)
+        fft_pred = np.fft.fft2(pred_t)
+        
+        # Shift the zero frequency component to the center
+        fft_gt_shifted = np.fft.fftshift(fft_gt)
+        fft_pred_shifted = np.fft.fftshift(fft_pred)
+        
+        # Compute amplitudes
+        amplitude_gt = np.abs(fft_gt_shifted)
+        amplitude_pred = np.abs(fft_pred_shifted)
+        
+        # Calculate the wavenumber axis
+        kx = np.fft.fftfreq(W, d=1.0)
+        ky = np.fft.fftfreq(H, d=1.0)
+        kx, ky = np.meshgrid(kx, ky)
+        wavenumber = np.sqrt(kx**2 + ky**2)
+        
+        # Flatten the wavenumber and amplitude arrays and sort them by wavenumber
+        wavenumber_flat = wavenumber.flatten()
+        amplitude_gt_flat = amplitude_gt.flatten()
+        amplitude_pred_flat = amplitude_pred.flatten()
+        
+        sorted_indices = np.argsort(wavenumber_flat)
+        wavenumber_sorted = wavenumber_flat[sorted_indices]
+        amplitude_gt_sorted = amplitude_gt_flat[sorted_indices]
+        amplitude_pred_sorted = amplitude_pred_flat[sorted_indices]
+        
+        # Plotting the amplitude vs. wavenumber for gt
+        axs_new[0, t].plot(wavenumber_sorted, amplitude_gt_sorted, color='blue')
+        axs_new[0, t].set_title(f"GT Amplitude vs Wavenumber (t={t+1})")
+        axs_new[0, t].set_xlabel('Wavenumber')
+        axs_new[0, t].set_ylabel('Amplitude')
+        axs_new[0, t].grid(True)
+
+        # Plotting the log amplitude vs. wavenumber for gt
+        axs_new[1, t].plot(wavenumber_sorted, np.log(amplitude_gt_sorted + 1e-12), color='blue')
+        axs_new[1, t].set_title(f"GT Log Amplitude vs Wavenumber (t={t+1})")
+        axs_new[1, t].set_xlabel('Wavenumber')
+        axs_new[1, t].set_ylabel('Log Amplitude')
+        axs_new[1, t].grid(True)
+
+        # Plotting the amplitude vs. wavenumber for pred
+        axs_new[2, t].plot(wavenumber_sorted, amplitude_pred_sorted, color='red')
+        axs_new[2, t].set_title(f"Pred Amplitude vs Wavenumber (t={t+1})")
+        axs_new[2, t].set_xlabel('Wavenumber')
+        axs_new[2, t].set_ylabel('Amplitude')
+        axs_new[2, t].grid(True)
+
+        # Plotting the log amplitude vs. wavenumber for pred
+        axs_new[3, t].plot(wavenumber_sorted, np.log(amplitude_pred_sorted + 1e-12), color='red')
+        axs_new[3, t].set_title(f"Pred Log Amplitude vs Wavenumber (t={t+1})")
+        axs_new[3, t].set_xlabel('Wavenumber')
+        axs_new[3, t].set_ylabel('Log Amplitude')
+    
+
+        fig_new.savefig(os.path.join(save_dir, config.experiment.freq_plot_file_name) + '_{}.png'.format(epoch))
+        plt.show()
+
+
+
+    
+
 
  
 
@@ -142,8 +247,10 @@ def validation_step(model, config, save_dir, epoch):
                 result = model(conditioning=cond, data=d[:,i-1:i]) # auto-regressive inference
                 
                 
+
+
                 # result[:,:,-len(simParams):] = d[:,i:i+1,-len(simParams):] # replace simparam prediction with true values
-                print('shape of result from model(): [len(result), result[0].shape]', len(result), result[0].shape)
+                # print('shape of result from model(): [len(result), result[0].shape]', len(result), result[0].shape)
                 prediction[:,i:i+1] = result
 
             prediction = torch.reshape(prediction, (numSamples, -1, d.shape[1], d.shape[2], d.shape[3], d.shape[4]))

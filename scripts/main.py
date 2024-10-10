@@ -13,10 +13,12 @@ import math
 import os, json
 from typing import List, Tuple, Dict
 
-from network import *
-from diffusion import *
-from dataloader import *
-from kol_dataloader import kolTorchDataset
+# import src
+
+from src.model.network import *
+from src.model.diffusion import *
+from src.utils.visualize_net import *
+from src.kol_dataloader import kolTorchDataset
 from validation import validation_step
 from omegaconf import OmegaConf
 import wandb
@@ -49,7 +51,7 @@ wandb.init(project="diffore", entity="visriv")
 
 # Load configuration from YAML file
 
-config = OmegaConf.load('/home/users/nus/e1333861/autoreg-pde-diffusion/scripts/kol_small.yaml')
+config = OmegaConf.load('/home/users/nus/e1333861/autoreg-pde-diffusion/configs/kol_small.yaml')
 
 device = config.device if torch.cuda.is_available() else "cpu"
 print("Training device: %s" % device)
@@ -101,6 +103,25 @@ cond_channels = config.model.input_steps * data_channels #2 * (2 + len(sim_field
 fusion_strategy = config.model.fusion_strategy
 
 model = DiffusionModel(config)
+# visualize_graphviz(model, )
+
+# debugging
+# model_state_dict_keys = model.state_dict().keys()
+# print("Model State Dict Keys:")
+# # for key in model_state_dict_keys:
+# #     print(key)
+
+# loaded = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+# checkpoint_keys = loaded["stateDictDecoder"].keys()
+# print("\nCheckpoint Keys:")
+# # for key in checkpoint_keys:
+# #     print(key)
+
+# delta1 = model_state_dict_keys - checkpoint_keys
+# delta2 = checkpoint_keys - model_state_dict_keys
+# print('delta1' , delta1)
+# print('delta2' , delta2)
+
 
 if start_from_checkpoint:
     # load weights from checkpoint
@@ -137,7 +158,12 @@ if config.experiment.train:
             data = d[:, input_steps:input_steps+1]
 
             noise, predicted_noise = model(conditioning=conditioning, data=data)
-
+            visualize_graphviz(model, 
+                               input_data=[conditioning, data],
+                            #    input_size=conditioning.shape,
+                               png_name='model_graph.png',
+                               device=device)
+            
             loss = F.smooth_l1_loss(noise, predicted_noise)
             print("    [Epoch %2d, Batch %4d]: %1.7f" % (epoch, s, loss.detach().cpu().item()))
             loss.backward()

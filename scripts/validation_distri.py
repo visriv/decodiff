@@ -43,25 +43,42 @@ def visualize(pred, gt, config, save_dir, epoch):
     field = 0 # velocity_x (0), velocity_y (1), density (2), or pressure (3)
 
     predPart = pred[samples]
-    gtPred = np.concatenate([gt[:,sequence,timeSteps,field], predPart[:,sequence,timeSteps,field]])
+
+    mae = torch.abs(gt - predPart)
+    gtPredMae = np.concatenate([gt[:,sequence,timeSteps,field], 
+                             predPart[:,sequence,timeSteps,field],
+                             mae[:,sequence,timeSteps,field]])
+    
+    # for t in range(gt.shape[2]):
+    #     # Extract the slices for the current timestamp
+    #     tensor1_t = torch.from_numpy(gt[0,0,t,0,:,:])
+    #     tensor2_t = torch.from_numpy(pred[0,0,t,0,:,:])
+        
+    #     # Compute MSE and MAE for the current timestamp
+    #     mse_t = F.mse_loss(tensor1_t, tensor2_t)
+    #     mae_t = F.l1_loss(tensor1_t, tensor2_t)
+
+
     print('gt concat shape:', gt[:,sequence,timeSteps,field].shape)
     print('predPart concat shape:', predPart[:,sequence,timeSteps,field].shape)
-    print('gtPred shape:', gtPred.shape)
+    print('gtPredMae shape:', gtPredMae.shape)
 
-    fig, axs = plt.subplots(nrows=gtPred.shape[0], ncols=gtPred.shape[1], figsize=(gtPred.shape[1]*1.9, gtPred.shape[0]), dpi=150, squeeze=False)
+    fig, axs = plt.subplots(nrows=gtPredMae.shape[0], ncols=gtPredMae.shape[1], figsize=(gtPredMae.shape[1]*1.9, gtPredMae.shape[0]), dpi=150, squeeze=False)
 
-    for i in range(gtPred.shape[0]):
-        for j in range(gtPred.shape[1]):
-            if i == gtPred.shape[0]-1:
+    for i in range(gtPredMae.shape[0]):
+        for j in range(gtPredMae.shape[1]):
+            if i == gtPredMae.shape[0]-1:
                 axs[i,j].set_xlabel("$t=%s$" % (timeSteps[j]+1), fontsize=10)
             if j == 0:
                 if i == 0:
                     axs[i,j].set_ylabel("Ground\nTruth", fontsize=10)
+                elif i == gtPredMae.shape[0]-1:
+                    axs[i,j].set_ylabel("Mean absolute error", fontsize=10)
                 else:
                     axs[i,j].set_ylabel("ACDM\nSample %d" % i, fontsize=10)
             axs[i,j].set_xticks([])
             axs[i,j].set_yticks([])
-            im = axs[i,j].imshow(gtPred[i][j], interpolation="catrom", cmap="RdBu_r")
+            im = axs[i,j].imshow(gtPredMae[i][j], interpolation="catrom", cmap="RdBu_r")
 
     fig.savefig(os.path.join(save_dir, config.experiment.plot_file_name) + '_{}.png'.format(epoch))
     plt.show()
