@@ -29,7 +29,7 @@ training:
 
 data:
   mode: "Training"
-  data_dirs: "/home/users/nus/e1333861/autoreg-pde-diffusion/data/kol/results_2.h5"
+  data_dirs: "./data/kol/results_2.h5"
   total_seq_len: 10
   rollout_total_seq_len: 15
   val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio

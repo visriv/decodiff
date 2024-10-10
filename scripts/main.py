@@ -51,7 +51,7 @@ wandb.init(project="diffore", entity="visriv")
 
 # Load configuration from YAML file
 
-config = OmegaConf.load('/home/users/nus/e1333861/autoreg-pde-diffusion/configs/kol_small.yaml')
+config = OmegaConf.load('./configs/kol_small.yaml')
 
 device = config.device if torch.cuda.is_available() else "cpu"
 print("Training device: %s" % device)

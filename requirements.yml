@@ -32,3 +32,5 @@ dependencies:
     - zarr
     - omegaconf
     - einops
+    - torchview
+    - graphviz
