@@ -6,10 +6,17 @@ from einops import rearrange
 from functools import partial
 
 import matplotlib.pyplot as plt
-
 import math
+from inspect import isfunction
 
 
+def exists(val):
+    return val is not None
+
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if isfunction(d) else d
 
 class Residual(nn.Module):
     def __init__(self, fn):
@@ -79,16 +86,28 @@ class Attention(nn.Module):
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_q = nn.Conv2d(dim, hidden_dim, 1, bias=False)
+        self.to_k = nn.Conv2d(dim, hidden_dim, 1, bias=False)
+        self.to_v = nn.Conv2d(dim, hidden_dim, 1, bias=False)
         self.to_out = nn.Conv2d(hidden_dim, dim, 1)
 
-    def forward(self, x):
+    def forward(self, x, context=None): #  x:(b,h*w,c), context:(b,seq_len,context_dim)
         b, c, h, w = x.shape
-        qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
-        )
-        q = q * self.scale
+        q = self.to_q(x) # q:(b,h*w,inner_dim)
+        context = default(context, x)
+
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        # qkv = self.to_qkv(x).chunk(3, dim=1)
+        # q, k, v = map(
+        #     lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+        # )
+
+        # Rearrange q, k, v for multi-head attention
+        q = rearrange(q, 'b (h c) x y -> b h c (x y)', h=self.heads) * self.scale
+        k = rearrange(k, 'b (h c) x y -> b h c (x y)', h=self.heads)
+        v = rearrange(v, 'b (h c) x y -> b h c (x y)', h=self.heads)
 
         sim = torch.einsum("b h d i, b h d j -> b h i j", q, k)
         sim = sim - sim.amax(dim=-1, keepdim=True).detach()
@@ -105,25 +124,39 @@ class LinearAttention(nn.Module):
         self.scale = dim_head**-0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_q = nn.Conv2d(dim, hidden_dim, 1, bias=False)
+        self.to_k = nn.Conv2d(dim, hidden_dim, 1, bias=False)
+        self.to_v = nn.Conv2d(dim, hidden_dim, 1, bias=False)
 
         self.to_out = nn.Sequential(nn.Conv2d(hidden_dim, dim, 1),
                                     nn.GroupNorm(1, dim))
 
-    def forward(self, x):
+    def forward(self, x, context=None):
         b, c, h, w = x.shape
-        qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
-        )
+        # print('inside LinearAttention class now')
+        # print('x.shape:', x.shape)
+        # if (context is not None):
+            # print('context.shape:', context.shape)
+        q = self.to_q(x) # q:(b,h*w,inner_dim)
+        context = default(context, x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        # q, k, v = map(
+        #     lambda t: rearrange(t, "b (h c) x y -> b h c (x y)", h=self.heads), qkv
+        # )
+
+        q = rearrange(q, 'b (h c) x y -> b h c (x y)', h=self.heads)
+        k = rearrange(k, 'b (h c) x y -> b h c (x y)', h=self.heads)
+        v = rearrange(v, 'b (h c) x y -> b h c (x y)', h=self.heads)
 
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
 
         q = q * self.scale
-        context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
+        context_kv = torch.einsum("b h d n, b h e n -> b h d e", k, v)
 
-        out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
+        out = torch.einsum("b h d e, b h d n -> b h e n", context_kv, q)
         out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.heads, x=h, y=w)
         return self.to_out(out)
     
@@ -136,9 +169,11 @@ class PreNorm(nn.Module):
         self.fn = fn
         self.norm = nn.GroupNorm(1, dim)
 
-    def forward(self, x):
+    def forward(self, x, *args, **kwargs):
         x = self.norm(x)
-        return self.fn(x)
+        return self.fn(x, *args, **kwargs)
+
+
 
 
 class Unet(nn.Module):
@@ -207,7 +242,7 @@ class Unet(nn.Module):
 
         mid_dim = dims[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
-        self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
+        self.mid_cross_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
@@ -229,32 +264,67 @@ class Unet(nn.Module):
             block_klass(dim, dim), nn.Conv2d(dim, out_dim, 1)
         )
 
-    def forward(self, x, time):
+    def forward(self, x, time, context):
+
+        intermediate_outputs = {}
         x = self.init_conv(x)
+
 
         t = self.time_mlp(time) if self.time_mlp is not None else None
 
         h = []
+        encoder_interm_outputs = []
+        decoder_interm_outputs = []
+
+
 
         # downsample
-        for block1, block2, attn, downsample in self.downs:
+        down_counter = 0
+        for block1, block2, cross_attn, downsample in self.downs:
+            suffix_key = str(down_counter)
             x = block1(x, t)
+            intermediate_outputs['downsample_1' + suffix_key] = x
             x = block2(x, t)
-            x = attn(x)
+            intermediate_outputs['downsample_2' + suffix_key] = x
+
+            x = cross_attn(x, context=None)
+            intermediate_outputs['down_cross_attn' + suffix_key] = x
+
             h.append(x)
             x = downsample(x)
+            intermediate_outputs['downsample_fin' + suffix_key] = x
+
+            down_counter += 1
+
 
         # bottleneck
         x = self.mid_block1(x, t)
-        x = self.mid_attn(x)
+        intermediate_outputs['mid1'] = x
+        x = self.mid_cross_attn(x, context=None)
+        intermediate_outputs['mid_crossattn'] = x
         x = self.mid_block2(x, t)
+        intermediate_outputs['mid2'] = x
+
+
 
         # upsample
-        for block1, block2, attn, upsample in self.ups:
+        up_counter = 0
+        for block1, block2, cross_attn, upsample in self.ups:
+            suffix_key = str(up_counter)
             x = torch.cat((x, h.pop()), dim=1)
-            x = block1(x, t)
-            x = block2(x, t)
-            x = attn(x)
-            x = upsample(x)
 
-        return self.final_conv(x)
+            x = block1(x, t)
+            intermediate_outputs['upsample_1' + suffix_key] = x
+
+            x = block2(x, t)
+            intermediate_outputs['upsample_2' + suffix_key] = x
+
+
+            x = cross_attn(x, context)
+            intermediate_outputs['up_cross_attn' + suffix_key] = x
+
+            x = upsample(x)
+            intermediate_outputs['upsample_fin' + suffix_key] = x
+
+
+        return self.final_conv(x), intermediate_outputs

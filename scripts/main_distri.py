@@ -5,20 +5,25 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Dataset
-import wandb
+import argparse
 
-from network import *
-from diffusion import *
-from dataloader import *
-from kol_dataloader import kolTorchDataset
+import wandb
+import os
+os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/autoreg-pde-diffusion:./'
+from src.model.network import *
+from src.model.diffusion import *
+from src.model.pde_refiner import *
+from src.kol_dataloader import kolTorchDataset
 from validation_distri import validation_step
+from src.utils.optim import warmup_lambda, torchOptimizerClass
+from src.utils.get_model import get_model
 from omegaconf import OmegaConf
 import wandb
 
 
 os.environ['MASTER_ADDR'] = 'localhost' 
 os.environ['MASTER_PORT'] = '12355'   
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {
@@ -32,7 +37,7 @@ def save_checkpoint(model, optimizer, epoch, file_path):
 def load_checkpoint(model, optimizer, epoch):
     file_path = 'model_checkpoint_{:02d}.pth'.format(epoch)  # Formatted filename with epoch number
     checkpoint = torch.load(file_path)
-    model.load_state_dict(checkpoint['stateDictDecoder'])
+    model.load_state_dict(checkpoint['stateDictDecoder'], strict=False)
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     return model, optimizer, epoch
@@ -63,13 +68,13 @@ def get_dataloader(batch_size, rank, world_size, config):
                 crop=config.data.crop)
     sampler = DistributedSampler(train_set, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(train_set, batch_size=batch_size, sampler=sampler)
-    return dataloader
+    return dataloader, train_set
 
 
 
 
 
-def train(rank, world_size, config):
+def main_child(rank, world_size, config):
     setup(rank, world_size)
 
     if (rank == 0):
@@ -91,27 +96,28 @@ def train(rank, world_size, config):
 
 
     batch_size = config.training.batch_size
-    if start_from_checkpoint:
-        epochs = config.training.finetune_epochs
-        lr = config.training.finetune_learning_rate
-    else:
-        epochs = config.training.epochs
-        lr = config.training.learning_rate
+    epochs = config.training.optim.max_epochs
 
 
 
 
-    model = DiffusionModel(config).to(rank)
+
+    model = get_model(config).to(rank)
 
     if start_from_checkpoint:
         # load weights from checkpoint
-        loaded = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-        model.load_state_dict(loaded["stateDictDecoder"])
+        loaded = torch.load(checkpoint_path, 
+                            map_location=torch.device('cpu'))
+        new_state_dict = {k.replace('module.', ''): v for k, v in loaded['stateDictDecoder'].items()}
+        loaded['stateDictDecoder'] = new_state_dict
+        # print(loaded['stateDictDecoder'].keys())
+        model.load_state_dict(loaded["stateDictDecoder"],
+                               strict=False)
     model.train()
     
     # TODO
-    train_loader = get_dataloader(batch_size, rank, world_size, config)
-    model = DDP(model, device_ids=[rank])
+    train_loader, train_set = get_dataloader(batch_size, rank, world_size, config)
+    model = DDP(model, device_ids=[rank], find_unused_parameters=True)
 
     # print model info and trainable weights
     params_trainable = sum([np.prod(p.size()) for p in filter(lambda p: p.requires_grad, model.parameters())])
@@ -124,8 +130,13 @@ def train(rank, world_size, config):
     if config.experiment.train:
         # training loop
         print("\nStarting training...")
+        torch_optimizer_class = torchOptimizerClass(config, model, world_size, num_samples=len(train_set))
+        optimizer = torch_optimizer_class.get_optimizer()
+        scheduler = torch_optimizer_class.get_scheduler()
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        
+        
+
         for epoch in range(epochs):
             train_loader.sampler.set_epoch(epoch)
 
@@ -143,7 +154,7 @@ def train(rank, world_size, config):
                 conditioning = torch.concat(cond, dim=2) # combine along channel dimension
                 data = d[:, input_steps:input_steps+1]
 
-                noise, predicted_noise = model(conditioning=conditioning, data=data)
+                noise, predicted_noise, _ = model(conditioning=conditioning, data=data)
 
                 loss = F.smooth_l1_loss(noise, predicted_noise)
                 print("    [Epoch %2d, Batch %4d]: %1.7f" % (epoch, s, loss.detach().cpu().item()))
@@ -152,6 +163,7 @@ def train(rank, world_size, config):
                 losses += [loss.detach().cpu().item()]
 
                 optimizer.step()
+            scheduler.step()
             print("[Epoch %2d, FULL]: %1.7f" % (epoch, sum(losses)/len(losses)))
             if(rank==0):
                 wandb.log({"train_loss": sum(losses)/len(losses), "epoch": epoch})
@@ -166,7 +178,8 @@ def train(rank, world_size, config):
                     torch.cuda.empty_cache()  # Clear the cache after validation
 
 
-
+    if config.experiment.validate:
+        pred, gt = validation_step(model, config, rank, save_dir, epoch)
    
     cleanup()
 
@@ -176,9 +189,16 @@ def train(rank, world_size, config):
 
 if __name__ == "__main__":
     world_size = torch.cuda.device_count()
-    config = OmegaConf.load('/home/users/nus/e1333861/autoreg-pde-diffusion/scripts/kol.yaml')
+
+    parser = argparse.ArgumentParser(description="Distributed Training with PyTorch")
+    parser.add_argument('--config', type=str, required=True, help="Path to the configuration file")
     
-    mp.spawn(train,
+    args = parser.parse_args()
+
+    # Load the configuration from the provided path
+    config = OmegaConf.load(args.config)
+        
+    mp.spawn(main_child,
              args=(world_size, config),
              nprocs=world_size,
              join=True)

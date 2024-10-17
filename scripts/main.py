@@ -13,8 +13,8 @@ import math
 import os, json
 from typing import List, Tuple, Dict
 
-# import src
-
+os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/autoreg-pde-diffusion:./'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  
 from src.model.network import *
 from src.model.diffusion import *
 from src.utils.visualize_net import *
@@ -24,7 +24,7 @@ from omegaconf import OmegaConf
 import wandb
 import gc
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  
+
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {
@@ -126,6 +126,9 @@ model = DiffusionModel(config)
 if start_from_checkpoint:
     # load weights from checkpoint
     loaded = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+    new_state_dict = {k.replace('module.', ''): v for k, v in loaded['stateDictDecoder'].items()}
+    loaded['stateDictDecoder'] = new_state_dict
+    print(loaded['stateDictDecoder'].keys())
     model.load_state_dict(loaded["stateDictDecoder"])
 model.train()
 model.to(device)
@@ -158,11 +161,11 @@ if config.experiment.train:
             data = d[:, input_steps:input_steps+1]
 
             noise, predicted_noise = model(conditioning=conditioning, data=data)
-            visualize_graphviz(model, 
-                               input_data=[conditioning, data],
-                            #    input_size=conditioning.shape,
-                               png_name='model_graph.png',
-                               device=device)
+            # visualize_graphviz(model, 
+            #                    input_data=[conditioning, data],
+            #                 #    input_size=conditioning.shape,
+            #                    png_name='model_graph.png',
+            #                    device=device)
             
             loss = F.smooth_l1_loss(noise, predicted_noise)
             print("    [Epoch %2d, Batch %4d]: %1.7f" % (epoch, s, loss.detach().cpu().item()))

@@ -25,7 +25,7 @@ class DiffusionModel(nn.Module):
     def __init__(self, 
                 config):
         super(DiffusionModel, self).__init__()
-
+        self.config = config
         self.timesteps = config.model.diffusion_steps
         betas = linear_beta_schedule(timesteps=self.timesteps)
         self.data_channels = config.model.data_channels
@@ -65,15 +65,17 @@ class DiffusionModel(nn.Module):
         )
 
         # second branch 
-        self.unet2 = Unet(
-            dim=self.dim,
-            channels= self.cond_channels + self.data_channels,
-            dim_mults=(1,1),
-            use_convnext=True,
-            convnext_mult=1,
-        )
-
-        self.FusionModule = FusionModule(config)
+        if (config.model.twin_tower):
+            self.unet2 = Unet(
+                dim=self.dim,
+                channels= self.cond_channels + self.data_channels,
+                dim_mults=self.config.model.unet2_mults,
+                use_convnext=True,
+                convnext_mult=1,
+            )
+            
+            if (config.model.fusion):
+                self.FusionModule = FusionModule(config)
         # Load weights for net1 if a path is provided
         # if net1_weights_path is not None:
         #     self.net1.load_state_dict(torch.load(net1_weights_path))
@@ -108,32 +110,39 @@ class DiffusionModel(nn.Module):
 
 
 
-            # Use the unet models and delete the outputs as soon as they are no longer needed
-            # unet1_output = checkpoint(self.unet1, dNoisy, t)
-            # unet2_output = checkpoint(self.unet2, dNoisy, t)
+
+            if (( self.config.model.twin_tower == True) and ( self.config.model.control_connect == True)):
+                unet2_output, intermediate_outputs2 = self.unet2(dNoisy, t, context=None)
+                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=intermediate_outputs2['upsample_20'])
+                predictedNoise = unet1_output
+                del unet1_output, unet2_output
+
+            elif (( self.config.model.twin_tower == True) and ( self.config.model.fusion == True)):
+                unet2_output, intermediate_outputs2 = self.unet2(dNoisy, t, context=None)
+                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=None)
+                predictedNoise = self.FusionModule(unet1_output, unet2_output, t)
+                del unet1_output, unet2_output
+
+            elif ( self.config.model.twin_tower == False):
+                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=None)
+                predictedNoise = unet1_output
+                del unet1_output
+
             
-
-            # predictedNoise = (
-            #     weights[:].unsqueeze(1).unsqueeze(2).unsqueeze(3) * unet1_output + 
-            #     weights[:].unsqueeze(1).unsqueeze(2).unsqueeze(3) * unet2_output
-            # )
-
-            # predictedNoise = self.unet1(dNoisy, t)
-
-            unet1_output = self.unet1(dNoisy, t)
-            unet2_output = self.unet2(dNoisy, t)
-            predictedNoise = self.FusionModule(unet1_output, unet2_output, t)
-
-
             # Delete tensors if they are no longer needed
-            del unet1_output, unet2_output
             torch.cuda.empty_cache()  # Clear the cache if you're on a GPU
 
+            # once denoising is completing, save interm outputs of the UNet
+            interm_features = {'UNet1': intermediate_outputs1,
+                               'UNet2': intermediate_outputs2 if self.config.model.twin_tower == True else {}
+                    }
+            
+        
             # unstack batch and sequence dimension again
             noise = torch.reshape(noise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
             predictedNoise = torch.reshape(predictedNoise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
 
-            return noise, predictedNoise
+            return noise, predictedNoise, interm_features
 
 
         # INFERENCE
@@ -152,13 +161,24 @@ class DiffusionModel(nn.Module):
 
                 # backward diffusion process that removes noise to create data
 
-                unet1_output = self.unet1(dNoiseCond, t)
-                unet2_output = self.unet2(dNoiseCond, t)
-                predictedNoiseCond = self.FusionModule(unet1_output, unet2_output, t)
+                if (( self.config.model.twin_tower == True) and ( self.config.model.control_connect == True)):
+                    unet2_output, intermediate_outputs2 = self.unet2(dNoiseCond, t, context=None)
+                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=intermediate_outputs2['upsample_20'])
+                    predictedNoiseCond = unet1_output
+                    del unet1_output, unet2_output
 
+                elif (( self.config.model.twin_tower == True) and ( self.config.model.fusion == True)):
+                    unet2_output, intermediate_outputs2 = self.unet2(dNoiseCond, t, context=None)
+                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=None)
+                    predictedNoiseCond = self.FusionModule(unet1_output, unet2_output, t)
+                    del unet1_output, unet2_output
 
-                # Delete tensors if they are no longer needed
-                del unet1_output, unet2_output
+                elif ( self.config.model.twin_tower == False):
+                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=None)
+                    predictedNoiseCond = unet1_output
+                    del unet1_output
+            
+
                 torch.cuda.empty_cache()  # Clear the cache if you're on a GPU
 
 
@@ -171,16 +191,21 @@ class DiffusionModel(nn.Module):
                     # sample randomly (only for non-final prediction), use mean directly for final prediction
                     dNoise = dNoise + self.sqrtPosteriorVariance[t] * torch.randn_like(dNoise)
 
+
+            # once denoising is completing, save interm outputs of the UNet
+            interm_features = {'UNet1': intermediate_outputs1,
+                               'UNet2': intermediate_outputs2 if self.config.model.twin_tower == True else {}
+                              }
             # unstack batch and sequence dimension again
             dNoise = torch.reshape(dNoise, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
 
-            return dNoise
+            return dNoise, interm_features
 
 
 class FusionModule(nn.Module):
     def __init__(self, config):
         super(FusionModule, self).__init__()
-        self.strategy = config.model.fusion_strategy
+        self.strategy = config.model.fusion_params.fusion_strategy
         self.time_dim = config.model.time_dim
         self.dim = config.model.dim
 

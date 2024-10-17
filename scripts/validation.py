@@ -104,72 +104,83 @@ def visualize(pred, gt, config, save_dir, epoch):
     T = gt.shape[2]
     H, W = gt.shape[4], gt.shape[5]
 
-    fig_new, axs_new = plt.subplots(nrows=4, ncols=T, figsize=(T * 5, 4 * 3), dpi=150, squeeze=False)
+    fig_new, axs = plt.subplots(nrows=2, ncols=T, figsize=(T * 5, 2 * 4), dpi=150, squeeze=False)
 
-    # Loop through each timestamp to calculate and plot the amplitude vs. wavenumber
+    # Loop through each timestamp to calculate and plot the combined energy spectrum
     for t in range(T):
         # Extract gt and pred arrays at timestamp t
         gt_t = gt[0, 0, t, 0, :, :]
         pred_t = pred[0, 0, t, 0, :, :]
         
-        # Calculate the 2D Fourier transforms for gt and pred
-        fft_gt = np.fft.fft2(gt_t)
-        fft_pred = np.fft.fft2(pred_t)
+        # Round up the size along each axis to an even number
+        n_H = int(math.ceil(H / 2.) * 2)
+        n_W = int(math.ceil(W / 2.) * 2)
         
-        # Shift the zero frequency component to the center
-        fft_gt_shifted = np.fft.fftshift(fft_gt)
-        fft_pred_shifted = np.fft.fftshift(fft_pred)
-        
-        # Compute amplitudes
-        amplitude_gt = np.abs(fft_gt_shifted)
-        amplitude_pred = np.abs(fft_pred_shifted)
-        
-        # Calculate the wavenumber axis
-        kx = np.fft.fftfreq(W, d=1.0)
-        ky = np.fft.fftfreq(H, d=1.0)
-        kx, ky = np.meshgrid(kx, ky)
-        wavenumber = np.sqrt(kx**2 + ky**2)
-        
-        # Flatten the wavenumber and amplitude arrays and sort them by wavenumber
-        wavenumber_flat = wavenumber.flatten()
-        amplitude_gt_flat = amplitude_gt.flatten()
-        amplitude_pred_flat = amplitude_pred.flatten()
-        
-        sorted_indices = np.argsort(wavenumber_flat)
-        wavenumber_sorted = wavenumber_flat[sorted_indices]
-        amplitude_gt_sorted = amplitude_gt_flat[sorted_indices]
-        amplitude_pred_sorted = amplitude_pred_flat[sorted_indices]
-        
-        # Plotting the amplitude vs. wavenumber for gt
-        axs_new[0, t].plot(wavenumber_sorted, amplitude_gt_sorted, color='blue')
-        axs_new[0, t].set_title(f"GT Amplitude vs Wavenumber (t={t+1})")
-        axs_new[0, t].set_xlabel('Wavenumber')
-        axs_new[0, t].set_ylabel('Amplitude')
-        axs_new[0, t].grid(True)
+        # Compute the 2D Fourier transform for gt and pred using rfft along both axes
+        fft_gt_x = np.fft.rfft(gt_t, n=n_W, axis=1)
+        fft_gt_y = np.fft.rfft(gt_t, n=n_H, axis=0)
 
-        # Plotting the log amplitude vs. wavenumber for gt
-        axs_new[1, t].plot(wavenumber_sorted, np.log(amplitude_gt_sorted + 1e-12), color='blue')
-        axs_new[1, t].set_title(f"GT Log Amplitude vs Wavenumber (t={t+1})")
-        axs_new[1, t].set_xlabel('Wavenumber')
-        axs_new[1, t].set_ylabel('Log Amplitude')
-        axs_new[1, t].grid(True)
+        fft_pred_x = np.fft.rfft(pred_t, n=n_W, axis=1)
+        fft_pred_y = np.fft.rfft(pred_t, n=n_H, axis=0)
+        
+        # Compute power spectrum (multiply by complex conjugate)
+        energy_gt_x = fft_gt_x.real ** 2 + fft_gt_x.imag ** 2
+        energy_gt_y = fft_gt_y.real ** 2 + fft_gt_y.imag ** 2
 
-        # Plotting the amplitude vs. wavenumber for pred
-        axs_new[2, t].plot(wavenumber_sorted, amplitude_pred_sorted, color='red')
-        axs_new[2, t].set_title(f"Pred Amplitude vs Wavenumber (t={t+1})")
-        axs_new[2, t].set_xlabel('Wavenumber')
-        axs_new[2, t].set_ylabel('Amplitude')
-        axs_new[2, t].grid(True)
+        energy_pred_x = fft_pred_x.real ** 2 + fft_pred_x.imag ** 2
+        energy_pred_y = fft_pred_y.real ** 2 + fft_pred_y.imag ** 2
 
-        # Plotting the log amplitude vs. wavenumber for pred
-        axs_new[3, t].plot(wavenumber_sorted, np.log(amplitude_pred_sorted + 1e-12), color='red')
-        axs_new[3, t].set_title(f"Pred Log Amplitude vs Wavenumber (t={t+1})")
-        axs_new[3, t].set_xlabel('Wavenumber')
-        axs_new[3, t].set_ylabel('Log Amplitude')
-    
+        # Average over appropriate axes
+        energy_gt_x = energy_gt_x.sum(axis=0) / fft_gt_x.shape[0]
+        energy_gt_y = energy_gt_y.sum(axis=1) / fft_gt_y.shape[1]
 
-        fig_new.savefig(os.path.join(save_dir, config.experiment.freq_plot_file_name) + '_{}.png'.format(epoch))
-        plt.show()
+        energy_pred_x = energy_pred_x.sum(axis=0) / fft_pred_x.shape[0]
+        energy_pred_y = energy_pred_y.sum(axis=1) / fft_pred_y.shape[1]
+
+        # Combine energies for a single spectrum
+        energy_gt = 0.5 * (energy_gt_x + energy_gt_y)
+        energy_pred = 0.5 * (energy_pred_x + energy_pred_y)
+
+        # Generate wavenumber axis (only for positive frequencies)
+        wavenumber_x = np.fft.rfftfreq(n_W)
+        wavenumber_y = np.fft.rfftfreq(n_H)
+
+        # Since energy_gt and energy_pred are averaged over x and y axes, 
+        # we use the wavenumber from one of the axes (they represent equivalent ranges)
+        wavenumber = wavenumber_x  # or wavenumber_y, since the final energy spectrum is averaged
+
+        # Sort wavenumber and energy values in descending order
+        sorted_indices = np.argsort(wavenumber)[::-1]
+        wavenumber_sorted = wavenumber[sorted_indices]
+        energy_gt_sorted = energy_gt[sorted_indices]
+        energy_pred_sorted = energy_pred[sorted_indices]
+
+        # Plotting the combined energy spectrum for gt and pred (linear scale)
+        axs[0, t].plot(wavenumber_sorted, energy_gt_sorted, label='GT', color='blue')
+        axs[0, t].plot(wavenumber_sorted, energy_pred_sorted, label='Pred', color='red')
+        axs[0, t].set_title(f"Energy Spectrum (Linear Scale) (t={t+1})")
+        axs[0, t].set_xlabel('Wavenumber')
+        axs[0, t].set_ylabel('Amplitude')
+        axs[0, t].grid(True)
+        axs[0, t].legend()
+
+        # Plotting the combined energy spectrum for gt and pred (log-log scale)
+        axs[1, t].plot(wavenumber_sorted, energy_gt_sorted, label='GT', color='blue')
+        axs[1, t].plot(wavenumber_sorted, energy_pred_sorted, label='Pred', color='red')
+        axs[1, t].set_xscale('log')
+        axs[1, t].set_yscale('log')
+        axs[1, t].set_title(f"Energy Spectrum (Log-Log Scale) (t={t+1})")
+        axs[1, t].set_xlabel('Wavenumber')
+        axs[1, t].set_ylabel('Amplitude')
+        axs[1, t].grid(True)
+        axs[1, t].legend()
+
+    # Adjust layout for better viewing
+    plt.tight_layout()
+    fig_new.savefig(os.path.join(save_dir, config.experiment.freq_plot_file_name) + '_{}.png'.format(epoch))
+
+    plt.show()
+
 
 
 
