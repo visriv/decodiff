@@ -298,12 +298,13 @@ class Unet(nn.Module):
 
 
         # bottleneck
+        suffix_key = 'bridge'
         x = self.mid_block1(x, t)
-        intermediate_outputs['mid1'] = x
+        intermediate_outputs['mid1' + suffix_key] = x
         x = self.mid_cross_attn(x, context=None)
-        intermediate_outputs['mid_crossattn'] = x
+        intermediate_outputs['mid_crossattn' + suffix_key] = x
         x = self.mid_block2(x, t)
-        intermediate_outputs['mid2'] = x
+        intermediate_outputs['mid2' + suffix_key] = x
 
 
 
@@ -319,12 +320,15 @@ class Unet(nn.Module):
             x = block2(x, t)
             intermediate_outputs['upsample_2' + suffix_key] = x
 
-
             x = cross_attn(x, context)
             intermediate_outputs['up_cross_attn' + suffix_key] = x
 
             x = upsample(x)
             intermediate_outputs['upsample_fin' + suffix_key] = x
 
+            up_counter += 1
 
-        return self.final_conv(x), intermediate_outputs
+        x = self.final_conv(x)
+        intermediate_outputs['upsample_fin_conv'] = x
+
+        return x, intermediate_outputs

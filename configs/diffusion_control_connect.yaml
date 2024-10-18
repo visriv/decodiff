@@ -7,6 +7,7 @@ experiment:
   run_id: 24
   project: kol
   plot_file_name: 2d_plot
+  n_timestamps_plot: 10
   freq_plot_file_name: freq_spectrum_plot
   plot_video: True
   stability_file_name: temporal_stability
@@ -20,6 +21,35 @@ experiment:
   save_ckpt_every_n_epochs: 5
   val_every_n_epochs: 5
 
+model:
+  family_name: 'DiffusionModel'
+  diffusion_steps: 20
+  input_steps: 9
+  output_steps: 1
+  total_steps: 10
+  data_channels: 2
+  dim: 128
+  time_dim: 256
+  twin_tower: True
+  #controlNet
+  control_connect: True
+  #fuse at top
+  fusion: False
+  fusion_params:
+    fusion_strategy: "cross_attention" 
+    num_heads: 2
+    embed_dim: 20 # (in+out)*data_channels
+
+data:
+  mode: "Training"
+  data_dirs: "./data/kol/results_2.h5"
+  total_seq_len: 10
+  rollout_total_seq_len: 600
+  val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio
+  train_ratio: 0.8
+  val_ratio: 0.15
+  crop: 0
+  
 training:
   optim:
     method: "adamw"
@@ -42,35 +72,10 @@ training:
 
 
 
-data:
-  mode: "Training"
-  data_dirs: "./data/kol/results_2.h5"
-  total_seq_len: 10
-  rollout_total_seq_len: 20
-  val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio
-  train_ratio: 0.8
-  val_ratio: 0.15
-  crop: 0
 
 
-model:
-  family_name: 'DiffusionModel'
-  diffusion_steps: 20
-  input_steps: 9
-  output_steps: 1
-  total_steps: 10
-  data_channels: 2
-  dim: 128
-  time_dim: 256
-  twin_tower: True
-  #controlNet
-  control_connect: True
-  #fuse at top
-  fusion: False
-  fusion_params:
-    fusion_strategy: "cross_attention" 
-    num_heads: 2
-    embed_dim: 20 # (in+out)*data_channels
+
+
 
 validation:
   n_val_samples: 1

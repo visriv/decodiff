@@ -69,7 +69,7 @@ class DiffusionModel(nn.Module):
             self.unet2 = Unet(
                 dim=self.dim,
                 channels= self.cond_channels + self.data_channels,
-                dim_mults=self.config.model.unet2_mults,
+                dim_mults=(1,1), #self.config.model.unet2_mults,
                 use_convnext=True,
                 convnext_mult=1,
             )
@@ -148,6 +148,7 @@ class DiffusionModel(nn.Module):
         # INFERENCE
         else:
             # conditioned reverse diffusion process
+            # print('inference mode of diffusion model')
             dNoise = torch.randn_like(d, device=device)
             cNoise = torch.randn_like(cond, device=device)
 
@@ -195,7 +196,7 @@ class DiffusionModel(nn.Module):
             # once denoising is completing, save interm outputs of the UNet
             interm_features = {'UNet1': intermediate_outputs1,
                                'UNet2': intermediate_outputs2 if self.config.model.twin_tower == True else {}
-                              }
+                               }
             # unstack batch and sequence dimension again
             dNoise = torch.reshape(dNoise, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
 
