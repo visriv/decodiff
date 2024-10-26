@@ -21,10 +21,10 @@ def linear_beta_schedule(timesteps):
     return torch.clip(betas, 0.0001, 0.9999)
 
 
-class DiffusionModel(nn.Module):
+class DiffusionDirect(nn.Module):
     def __init__(self, 
                 config):
-        super(DiffusionModel, self).__init__()
+        super(DiffusionDirect, self).__init__()
         self.config = config
         self.timesteps = config.model.diffusion_steps
         betas = linear_beta_schedule(timesteps=self.timesteps)
@@ -55,6 +55,7 @@ class DiffusionModel(nn.Module):
         self.register_buffer('posterior_log_variance_clipped', torch.log(posteriorVariance.clamp(min=1e-20)))
         self.register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphasCumprodPrev) / (1. - alphasCumprod))
         self.register_buffer('posterior_mean_coef2', (1. - alphasCumprodPrev) * torch.sqrt(alphas) / (1. - alphasCumprod))
+        self.register_buffer('loss_weight', torch.sqrt(alphas) * torch.sqrt(1. - alphasCumprod) / betas / 100)
 
 
 
@@ -101,40 +102,40 @@ class DiffusionModel(nn.Module):
         seqLen = data.shape[1]
 
         # combine batch and sequence dimension for decoder processing
-        d = torch.reshape(data, (-1, data.shape[2], data.shape[3], data.shape[4]))
+        x = torch.reshape(data, (-1, data.shape[2], data.shape[3], data.shape[4]))
         cond = torch.reshape(conditioning, (-1, conditioning.shape[2], conditioning.shape[3], conditioning.shape[4]))
 
         # TRAINING
         if self.training:
 
             # forward diffusion process that adds noise to data
-            d = torch.concat((cond, d), dim=1).to(device)
-            noise = torch.randn_like(d, device=device)
-            t = torch.randint(0, self.timesteps, (d.shape[0],), device=device).long()
-            dNoisy = self.sqrtAlphasCumprod[t] * d + self.sqrtOneMinusAlphasCumprod[t] * noise
+            x_and_c = torch.concat((cond, x), dim=1).to(device)
+            noise = torch.randn_like(x_and_c, device=device)
+            t = torch.randint(0, self.timesteps, (x_and_c.shape[0],), device=device).long()
+            x_and_c_noisy = self.sqrtAlphasCumprod[t] * x_and_c + self.sqrtOneMinusAlphasCumprod[t] * noise
  
 
 
 
 
             if (( self.config.model.twin_tower == True) and ( self.config.model.control_connect == True)):
-                unet2_output, intermediate_outputs2 = self.unet2(dNoisy, t, context=None)
-                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=intermediate_outputs2['upsample_20'])
-                predictedNoise = unet1_output
+                unet2_output, intermediate_outputs2 = self.unet2(x_and_c_noisy, t, context=None)
+                unet1_output, intermediate_outputs1 = self.unet1(x_and_c_noisy, t, context=intermediate_outputs2['upsample_20'])
+                predicted_x = unet1_output
                 del unet1_output, unet2_output
 
             elif (( self.config.model.twin_tower == True) and ( self.config.model.fusion == True)):
-                unet2_output, intermediate_outputs2 = self.unet2(dNoisy, t, context=None)
-                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=None)
-                predictedNoise = self.FusionModule(unet1_output, unet2_output, t)
+                unet2_output, intermediate_outputs2 = self.unet2(x_and_c_noisy, t, context=None)
+                unet1_output, intermediate_outputs1 = self.unet1(x_and_c_noisy, t, context=None)
+                predicted_x = self.FusionModule(unet1_output, unet2_output, t)
                 del unet1_output, unet2_output
 
             elif ( self.config.model.twin_tower == False):
-                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=None)
-                predictedNoise = unet1_output
+                unet1_output, intermediate_outputs1 = self.unet1(x_and_c_noisy, t, context=None)
+                predicted_x = unet1_output
                 del unet1_output
 
-            print('predictedNoise.shape:', predictedNoise.shape)
+            # print('predicted_x.shape:', predicted_x.shape)
 
             # Delete tensors if they are no longer needed
             torch.cuda.empty_cache()  # Clear the cache if you're on a GPU
@@ -147,43 +148,51 @@ class DiffusionModel(nn.Module):
         
             # unstack batch and sequence dimension again
             noise = torch.reshape(noise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
-            predictedNoise = torch.reshape(predictedNoise, (-1, seqLen, conditioning.shape[2] + data.shape[2], data.shape[3], data.shape[4]))
-            print('predictedNoise.shape:', predictedNoise.shape)
-            return noise, predictedNoise, interm_features
+            x = torch.reshape(x, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
+            predicted_x = torch.reshape(predicted_x, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
+            # print('predicted_x.shape:', predicted_x.shape)
+
+            return noise, predicted_x, x, self.loss_weight[t], interm_features
 
 
         # INFERENCE
         else:
             # conditioned reverse diffusion process
             # print('inference mode of diffusion model')
-            dNoise = torch.randn_like(d, device=device)
+            xT = torch.randn_like(x, device=device)
             cNoise = torch.randn_like(cond, device=device)
+            xt = xT
+            print('cond.shape:', cond.shape)
+            print('dummy text')
+            print('xt.shape:', xt.shape)
 
             for i in reversed(range(0, self.timesteps)):
+
                 t = i * torch.ones(cond.shape[0], device=device).long()
 
                 # compute conditioned part with normal forward diffusion
                 condNoisy = self.sqrtAlphasCumprod[t] * cond + self.sqrtOneMinusAlphasCumprod[t] * cNoise
 
-                dNoiseCond = torch.concat((condNoisy, dNoise), dim=1)
+                xt_condNoisy = torch.concat((condNoisy, xt), dim=1)
+                print('xt_condNoisy.shape:', xt_condNoisy.shape)
 
                 # backward diffusion process that removes noise to create data
 
                 if (( self.config.model.twin_tower == True) and ( self.config.model.control_connect == True)):
-                    unet2_output, intermediate_outputs2 = self.unet2(dNoiseCond, t, context=None)
-                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=intermediate_outputs2['upsample_20'])
-                    predictedNoiseCond = unet1_output
+                    unet2_output, intermediate_outputs2 = self.unet2(xt_condNoisy, t, context=None)
+                    unet1_output, intermediate_outputs1 = self.unet1(xt_condNoisy, t, context=intermediate_outputs2['upsample_20'])
+                    x0_hat = unet1_output
                     del unet1_output, unet2_output
 
                 elif (( self.config.model.twin_tower == True) and ( self.config.model.fusion == True)):
-                    unet2_output, intermediate_outputs2 = self.unet2(dNoiseCond, t, context=None)
-                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=None)
-                    predictedNoiseCond = self.FusionModule(unet1_output, unet2_output, t)
+                    unet2_output, intermediate_outputs2 = self.unet2(xt_condNoisy, t, context=None)
+                    unet1_output, intermediate_outputs1 = self.unet1(xt_condNoisy, t, context=None)
+                    x0_hat = self.FusionModule(unet1_output, unet2_output, t)
                     del unet1_output, unet2_output
 
                 elif ( self.config.model.twin_tower == False):
-                    unet1_output, intermediate_outputs1 = self.unet1(dNoiseCond, t, context=None)
-                    predictedNoiseCond = unet1_output
+                    unet1_output, intermediate_outputs1 = self.unet1(xt_condNoisy, t, context=None)
+                    x0_hat = unet1_output
                     del unet1_output
             
 
@@ -192,22 +201,29 @@ class DiffusionModel(nn.Module):
 
 
                 # use model (noise predictor) to predict mean
-                modelMean = self.sqrtRecipAlphas[t] * (dNoiseCond - self.betas[t] * predictedNoiseCond / self.sqrtOneMinusAlphasCumprod[t])
+                # modelMean = self.sqrtRecipAlphas[t] * (xt_condNoisy - self.betas[t] * predictedNoiseCond / self.sqrtOneMinusAlphasCumprod[t])
+                modelMean_t_first_term = self.posterior_mean_coef1[t] * x0_hat
+                modelMean_t_second_term = self.posterior_mean_coef1[t] * xt
+                modelMean_t = modelMean_t_first_term + modelMean_t_second_term
 
-                dNoise = modelMean[:, cond.shape[1]:modelMean.shape[1]] # discard prediction of conditioning
+
+                x_tminus1 = modelMean_t[:, cond.shape[1]:modelMean_t.shape[1]] # discard prediction of conditioning
+                
                 if i != 0:
                     # sample randomly (only for non-final prediction), use mean directly for final prediction
-                    dNoise = dNoise + self.sqrtPosteriorVariance[t] * torch.randn_like(dNoise)
-
-
+                    x_tminus1 = x_tminus1 + self.sqrtPosteriorVariance[t] * torch.randn_like(x_tminus1)
+                
+                xt = x_tminus1
+            # end of loop, get the final estimated denoised sample
+            x0 = xt
             # once denoising is completing, save interm outputs of the UNet
             interm_features = {'UNet1': intermediate_outputs1,
                                'UNet2': intermediate_outputs2 if self.config.model.twin_tower == True else {}
                                }
             # unstack batch and sequence dimension again
-            dNoise = torch.reshape(dNoise, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
+            x0 = torch.reshape(x0, (-1, seqLen, data.shape[2], data.shape[3], data.shape[4]))
 
-            return dNoise, interm_features
+            return x0, interm_features
 
 
 class FusionModule(nn.Module):

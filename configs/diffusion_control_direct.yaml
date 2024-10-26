@@ -1,7 +1,7 @@
 # config.yaml
 device: "cuda"  # or "cpu"
 experiment:
-  train: True
+  train: False
   validate: True
   analysis: True
   run_id: 25
@@ -15,14 +15,14 @@ experiment:
   save_plot_video_path: pred_video
   eval_node: eval_node
   start_from_checkpoint: True
-  checkpoint_path: 'runs/kol/22/model_checkpoint_80.pth'  
+  checkpoint_path: 'runs/kol/25/model_checkpoint_00.pth'  
   # checkpoint_path: 'runs/kol/21/model_checkpoint_15.pth'  
   # checkpoint_path: 'runs/kol/3/model_checkpoint_88.pth'  
-  save_ckpt_every_n_epochs: 5
-  val_every_n_epochs: 5
+  save_ckpt_every_n_epochs: 1
+  val_every_n_epochs: 1
 
 model:
-  family_name: 'DiffusionModel'
+  family_name: 'DiffusionDirect'
   diffusion_steps: 20
   input_steps: 9
   output_steps: 1
@@ -30,7 +30,7 @@ model:
   data_channels: 2
   dim: 128
   time_dim: 256
-  out_channels: 20 # data_channels * total_steps
+  out_channels: 2 # data_channels * output_steps
   twin_tower: True
   #controlNet
   control_connect: True

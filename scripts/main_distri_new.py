@@ -7,7 +7,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Dataset
 import argparse
 
-import wandb
+
 import os
 os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/decodiff:./'
 from src.model.network import *
@@ -19,6 +19,8 @@ from src.utils.optim import warmup_lambda, torchOptimizerClass
 from src.utils.get_model import get_model
 from omegaconf import OmegaConf
 import wandb
+from einops import reduce
+from tqdm import tqdm
 
 
 os.environ['MASTER_ADDR'] = 'localhost' 
@@ -141,36 +143,42 @@ def main_child(rank, world_size, config):
             train_loader.sampler.set_epoch(epoch)
 
             losses = []
-            for s, sample in enumerate(train_loader, 0):
-                optimizer.zero_grad()
-                print(s)
-                sample = rearrange(sample, 'b t h w c -> b t c h w').to(rank)
-                d = sample.to(rank)
+            with tqdm(train_loader, desc=f"Epoch {epoch}", position=0, leave=True) as pbar:
+                for s, sample in enumerate(pbar):
 
-                input_steps = config.model.input_steps
-                cond = []
-                for i in range(input_steps):
-                    cond += [d[:,i:i+1]] # collect input steps
-                conditioning = torch.concat(cond, dim=2) # combine along channel dimension
-                data = d[:, input_steps:input_steps+1]
+                    optimizer.zero_grad()
+                    sample = rearrange(sample, 'b t h w c -> b t c h w').to(rank)
+                    d = sample.to(rank)
 
-                print('conditioning.shape, data.shape:', conditioning.shape, data.shape)
-                noise, predicted_noise, _ = model(conditioning=conditioning, data=data)
+                    input_steps = config.model.input_steps
+                    cond = []
+                    for i in range(input_steps):
+                        cond += [d[:,i:i+1]] # collect input steps
+                    conditioning = torch.concat(cond, dim=2) # combine along channel dimension
+                    data = d[:, input_steps:input_steps+1]
 
-                loss = F.smooth_l1_loss(noise, predicted_noise)
-                print("    [Epoch %2d, Batch %4d]: %1.7f" % (epoch, s, loss.detach().cpu().item()))
-                loss.backward()
+                    noise, predicted_x, x, loss_weight, _ = model(conditioning=conditioning, data=data)
+                    loss = F.smooth_l1_loss(x, predicted_x, reduction='none')
+                    loss = reduce(loss, 'b ... -> b (...)', 'mean')
 
-                losses += [loss.detach().cpu().item()]
 
-                optimizer.step()
+                    loss = loss * loss_weight#.reshape(loss.shape)
+                    loss = loss.mean()
+
+                    pbar.set_postfix({'Batch': s, 'Loss': f'{loss.detach().cpu().item():.7f}'})
+
+                    loss.backward()
+
+                    losses += [loss.detach().cpu().item()]
+
+                    optimizer.step()
             scheduler.step()
             print("[Epoch %2d, FULL]: %1.7f" % (epoch, sum(losses)/len(losses)))
             if(rank==0):
                 wandb.log({"train_loss": sum(losses)/len(losses), "epoch": epoch})
             
                 # Specify the path to save the checkpoint
-                if (epoch % save_ckpt_every_n_epochs == 0):
+                if ((epoch+1) % save_ckpt_every_n_epochs == 0):
                     file_path = os.path.join(save_dir, 'model_checkpoint_{:02d}.pth'.format( epoch))
                     save_checkpoint(model, optimizer, epoch=epoch, file_path=file_path)
 

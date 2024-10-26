@@ -265,7 +265,7 @@ class Unet(nn.Module):
         )
 
     def forward(self, x, time, context):
-
+        
         intermediate_outputs = {}
         x = self.init_conv(x)
 
