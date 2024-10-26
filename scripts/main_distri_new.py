@@ -9,7 +9,7 @@ import argparse
 
 
 import os
-os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/decodiff:./'
+# os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/decodiff:./'
 from src.model.network import *
 from src.model.diffusion import *
 from src.model.pde_refiner import *
@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 os.environ['MASTER_ADDR'] = 'localhost' 
 os.environ['MASTER_PORT'] = '12355'   
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {

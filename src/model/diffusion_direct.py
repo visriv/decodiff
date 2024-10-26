@@ -162,9 +162,9 @@ class DiffusionDirect(nn.Module):
             xT = torch.randn_like(x, device=device)
             cNoise = torch.randn_like(cond, device=device)
             xt = xT
-            print('cond.shape:', cond.shape)
-            print('dummy text')
-            print('xt.shape:', xt.shape)
+            # print('cond.shape:', cond.shape)
+            # print('dummy text')
+            # print('xt.shape:', xt.shape)
 
             for i in reversed(range(0, self.timesteps)):
 
@@ -174,7 +174,7 @@ class DiffusionDirect(nn.Module):
                 condNoisy = self.sqrtAlphasCumprod[t] * cond + self.sqrtOneMinusAlphasCumprod[t] * cNoise
 
                 xt_condNoisy = torch.concat((condNoisy, xt), dim=1)
-                print('xt_condNoisy.shape:', xt_condNoisy.shape)
+                # print('xt_condNoisy.shape:', xt_condNoisy.shape)
 
                 # backward diffusion process that removes noise to create data
 
@@ -207,7 +207,7 @@ class DiffusionDirect(nn.Module):
                 modelMean_t = modelMean_t_first_term + modelMean_t_second_term
 
 
-                x_tminus1 = modelMean_t[:, cond.shape[1]:modelMean_t.shape[1]] # discard prediction of conditioning
+                x_tminus1 = modelMean_t#[:, cond.shape[1]:modelMean_t.shape[1]] # discard prediction of conditioning
                 
                 if i != 0:
                     # sample randomly (only for non-final prediction), use mean directly for final prediction
