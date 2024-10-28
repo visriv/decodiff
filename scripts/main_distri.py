@@ -22,7 +22,7 @@ import wandb
 
 
 os.environ['MASTER_ADDR'] = 'localhost' 
-os.environ['MASTER_PORT'] = '12355'   
+os.environ['MASTER_PORT'] = '12356'   
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 def save_checkpoint(model, optimizer, epoch, file_path):

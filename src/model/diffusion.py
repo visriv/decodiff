@@ -74,7 +74,7 @@ class DiffusionModel(nn.Module):
             self.unet2 = Unet(
                 dim=self.dim,
                 channels= self.cond_channels + self.data_channels,
-                dim_mults=(1,1), #self.config.model.unet2_mults,
+                dim_mults= self.config.model.unet2_mults,
                 use_convnext=True,
                 convnext_mult=1,
             )
@@ -119,7 +119,8 @@ class DiffusionModel(nn.Module):
 
             if (( self.config.model.twin_tower == True) and ( self.config.model.control_connect == True)):
                 unet2_output, intermediate_outputs2 = self.unet2(dNoisy, t, context=None)
-                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=intermediate_outputs2['upsample_20'])
+                print(intermediate_outputs2.keys())
+                unet1_output, intermediate_outputs1 = self.unet1(dNoisy, t, context=intermediate_outputs2['upsample_10'])
                 predictedNoise = unet1_output
                 del unet1_output, unet2_output
 

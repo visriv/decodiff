@@ -102,7 +102,7 @@ def validation_step(model, config, rank, save_dir, epoch):
                 prediction[:,i] = d[:,i]
 
             for i in tqdm(range(inputSteps, d.shape[1]), desc="autoreg rollout steps"):
-                print('{} steps out of'.format(i), d.shape[1])
+                # print('{} steps out of'.format(i), d.shape[1])
                 cond = []
                 for j in range(inputSteps,0,-1):
                     cond += [prediction[:, i-j : i-(j-1)]] # collect input steps
@@ -122,8 +122,8 @@ def validation_step(model, config, rank, save_dir, epoch):
     # interm_features['gt'] = gt[0, 0, -1, 0, :, :] #save the t = last GT for visualization
     # visualize intermediate embeddings
     np.save(save_dir + '/interm_embeds.npy', interm_features)
-    visualize_interm_embeds(interm_features, save_dir, config)
-    visualize_spatial_spectra(interm_features, save_dir, config)
+    visualize_interm_embeds(interm_features, save_dir, config, epoch)
+    visualize_spatial_spectra(interm_features, save_dir, config, epoch)
 
     # Clear CUDA memory
     torch.cuda.empty_cache()

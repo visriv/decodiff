@@ -6,7 +6,7 @@ import numpy as np
 import os
 from src.utils.spectrum import get_spatial_spectrum
 
-def visualize_interm_embeds(interm_features_dict, save_dir, config):
+def visualize_interm_embeds(interm_features_dict, save_dir, config, epoch):
     """
     Visualize intermediate outputs from Unet1 and Unet2 in a U-shape structure with symmetry.
     
@@ -120,7 +120,7 @@ def visualize_interm_embeds(interm_features_dict, save_dir, config):
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)  # Adjust the spacing for the suptitle
-    fig.savefig(os.path.join(save_dir, 'interm_embeds_comparison.png'))
+    fig.savefig(os.path.join(save_dir, '_{}_interm_embeds_comparison.png'.format(epoch)))
     plt.show()
 
 # Example usage
@@ -145,7 +145,7 @@ def visualize_interm_embeds(interm_features_dict, save_dir, config):
 
 
 
-def visualize_spatial_spectra(interm_features_dict, save_dir, config):
+def visualize_spatial_spectra(interm_features_dict, save_dir, config, epoch):
     """
     Visualize sine waves in a U-shape structure with symmetry, keeping the same structure as intermediate feature visualization.
     
@@ -263,7 +263,7 @@ def visualize_spatial_spectra(interm_features_dict, save_dir, config):
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)  # Adjust the spacing for the suptitle
-    fig.savefig(os.path.join(save_dir, 'unet_spectrum_comparison.png'))
+    fig.savefig(os.path.join(save_dir, '_{}_unet_spectrum_comparison.png'.format(epoch)))
     plt.show()
 
 # Example usage

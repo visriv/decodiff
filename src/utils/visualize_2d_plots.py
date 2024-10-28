@@ -88,9 +88,9 @@ def visualize(pred, gt, config, save_dir, epoch):
     plt.show()
 
     if (config.experiment.plot_video):
-        animate(gt, os.path.join(save_dir, 'gt_' + config.experiment.save_plot_video_path) + '_.mp4',
+        animate(gt, os.path.join(save_dir, 'gt_' + config.experiment.save_plot_video_path) + '_{}.mp4'.format(epoch),
                 field) 
-        animate(pred, os.path.join(save_dir, 'pred_' +config.experiment.save_plot_video_path) + '_.mp4',
+        animate(pred, os.path.join(save_dir, 'pred_' +config.experiment.save_plot_video_path) + '_{}.mp4'.format(epoch),
                 field) 
 
 
@@ -101,8 +101,8 @@ def plot_spectrum(gt, pred, save_dir, config, epoch):
 
     # Assuming gt and pred are numpy arrays of shape [1, 1, T, 1, H, W]
     # Extract the relevant dimensions (T, H, W)
-    np.save(os.path.join(save_dir, 'gtNpy.npy'), gt )
-    np.save(os.path.join(save_dir, 'predNpy.npy'), pred )
+    np.save(os.path.join(save_dir, '_{}_gtNpy.npy'.format(epoch)), gt )
+    np.save(os.path.join(save_dir, '_{}_predNpy.npy'.format(epoch)), pred )
 
     timeSteps = [i * gt.shape[2] // config.experiment.n_timestamps_plot for i in range(config.experiment.n_timestamps_plot)] + [gt.shape[2]-1]
     T = len(timeSteps)

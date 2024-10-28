@@ -21,11 +21,11 @@ from omegaconf import OmegaConf
 import wandb
 from einops import reduce
 from tqdm import tqdm
-
+import re
 
 os.environ['MASTER_ADDR'] = 'localhost' 
-os.environ['MASTER_PORT'] = '12355'   
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['MASTER_PORT'] = '12365'   
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
 def save_checkpoint(model, optimizer, epoch, file_path):
     checkpoint = {
@@ -102,7 +102,7 @@ def main_child(rank, world_size, config):
 
 
 
-
+    curr_epoch = 0
 
     model = get_model(config).to(rank)
 
@@ -115,6 +115,14 @@ def main_child(rank, world_size, config):
         # print(loaded['stateDictDecoder'].keys())
         model.load_state_dict(loaded["stateDictDecoder"],
                                strict=False)
+        
+        get_epoch = re.search(r"model_checkpoint_(\d+)\.pth", checkpoint_path)
+        # Extract the number if it exists
+        if get_epoch:
+            curr_epoch = int(get_epoch.group(1))
+        else:
+            curr_epoch = 0
+
     model.train()
     
     # TODO
@@ -128,7 +136,7 @@ def main_child(rank, world_size, config):
     print("Trainable Weights (All Weights): %d (%d)" % (params_trainable, params))
 
 
-    epoch = 'last'
+
     if config.experiment.train:
         # training loop
         print("\nStarting training...")
@@ -139,7 +147,7 @@ def main_child(rank, world_size, config):
         
         
 
-        for epoch in range(epochs):
+        for epoch in range(curr_epoch, epochs):
             train_loader.sampler.set_epoch(epoch)
 
             losses = []
@@ -158,12 +166,11 @@ def main_child(rank, world_size, config):
                     data = d[:, input_steps:input_steps+1]
 
                     noise, predicted_x, x, loss_weight, _ = model(conditioning=conditioning, data=data)
-                    loss = F.smooth_l1_loss(x, predicted_x, reduction='none')
-                    loss = reduce(loss, 'b ... -> b (...)', 'mean')
-
-
-                    loss = loss * loss_weight#.reshape(loss.shape)
-                    loss = loss.mean()
+                    # loss = F.smooth_l1_loss(x, predicted_x, reduction='none')
+                    # loss = reduce(loss, 'b ... -> b (...)', 'mean')
+                    # loss = loss * loss_weight#.reshape(loss.shape)
+                    # loss = loss.mean()
+                    loss = F.smooth_l1_loss(x, predicted_x)
 
                     pbar.set_postfix({'Batch': s, 'Loss': f'{loss.detach().cpu().item():.7f}'})
 
@@ -207,8 +214,8 @@ if __name__ == "__main__":
     # Load the configuration from the provided path
     config = OmegaConf.load(args.config)
         
-    # main_child(rank=0, world_size=1, config=config)
-    mp.spawn(main_child,
-             args=(world_size, config),
-             nprocs=world_size,
-             join=True)
+    main_child(rank=0, world_size=1, config=config)
+    # mp.spawn(main_child,
+    #          args=(world_size, config),
+    #          nprocs=world_size,
+            #  join=True)

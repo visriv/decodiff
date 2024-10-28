@@ -4,7 +4,7 @@ experiment:
   train: True
   validate: True
   analysis: True
-  run_id: 25
+  run_id: 27
   project: kol
   plot_file_name: 2d_plot
   n_timestamps_plot: 10
@@ -14,7 +14,7 @@ experiment:
   spectral_analysis: spec_analysis
   save_plot_video_path: pred_video
   eval_node: eval_node
-  start_from_checkpoint: True
+  start_from_checkpoint: False
   checkpoint_path: 'runs/kol/22/model_checkpoint_80.pth'  
   # checkpoint_path: 'runs/kol/21/model_checkpoint_15.pth'  
   # checkpoint_path: 'runs/kol/3/model_checkpoint_88.pth'  
@@ -28,6 +28,7 @@ model:
   output_steps: 1
   total_steps: 10
   data_channels: 2
+  unet2_mults: [1]
   dim: 128
   time_dim: 256
   out_channels: 20 # data_channels * total_steps
