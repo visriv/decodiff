@@ -13,7 +13,7 @@ import math
 import os, json
 from typing import List, Tuple, Dict
 
-os.environ['PYTHONPATH'] = '/home/users/nus/e1333861/autoreg-pde-diffusion:./'
+os.environ['PYTHONPATH'] =  '/home/autoreg-pde-diffusion/'
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  
 from src.model.network import *
 from src.model.diffusion import *
@@ -68,11 +68,11 @@ val_every_n_epochs = config.experiment.val_every_n_epochs
 
 batch_size = config.training.batch_size
 if start_from_checkpoint:
-    epochs = config.training.finetune_epochs
-    lr = config.training.finetune_learning_rate
+    epochs = config.training.optim.finetune_epochs
+    lr = config.training.optim.finetune_learning_rate
 else:
-    epochs = config.training.epochs
-    lr = config.training.learning_rate
+    epochs = config.training.optim.epochs
+    lr = config.training.optim.learning_rate
 
 # sequence_length = config.sequence_length
 # sim_fields = config.sim_fields
@@ -100,7 +100,7 @@ train_loader = DataLoader(
 # model definition
 data_channels = config.model.data_channels
 cond_channels = config.model.input_steps * data_channels #2 * (2 + len(sim_fields) + len(sim_params))
-fusion_strategy = config.model.fusion_strategy
+# fusion_strategy = config.model.fusion_strategy
 
 model = DiffusionModel(config)
 # visualize_graphviz(model, )

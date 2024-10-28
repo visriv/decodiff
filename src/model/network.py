@@ -194,7 +194,8 @@ class Unet(nn.Module):
         # determine dimensions
         self.channels = channels
 
-        init_dim = init_dim if init_dim is not None else dim // 3 * 2
+        init_dim = default(init_dim, dim)
+        # init_dim = init_dim if init_dim is not None else dim // 3 * 2
         self.init_conv = nn.Conv2d(channels, init_dim, 7, padding=3)
 
         dims = [init_dim, *map(lambda m: int(dim * m), dim_mults)]
@@ -245,7 +246,7 @@ class Unet(nn.Module):
         self.mid_cross_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
 
-        for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
+        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind >= (num_resolutions - 1)
 
             self.ups.append(

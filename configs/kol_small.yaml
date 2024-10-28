@@ -4,7 +4,7 @@ experiment:
   train: True
   validate: True
   analysis: True
-  run_id: 21
+  run_id: 28
   project: kol
   plot_file_name: 2d_plot
   freq_plot_file_name: freq_spectrum_plot
@@ -19,38 +19,68 @@ experiment:
   save_ckpt_every_n_epochs: 1
   val_every_n_epochs: 1
 
-training:
-  batch_size: 2
-  finetune_epochs: 40
-  finetune_learning_rate: 0.00001  
-  epochs: 2
-  learning_rate: 0.0001
 
 
-data:
-  mode: "Training"
-  data_dirs: "./data/kol/results_2.h5"
-  total_seq_len: 10
-  rollout_total_seq_len: 15
-  val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio
-  train_ratio: 0.8
-  val_ratio: 0.15
-  crop: 0
 
 
 model:
+  family_name: 'DiffusionModel'
   diffusion_steps: 20
   input_steps: 9
   output_steps: 1
   total_steps: 10
   data_channels: 2
+  unet2_mults: [1]
   dim: 128
   time_dim: 256
+  out_channels: 20 # data_channels * total_steps
+  twin_tower: True
+  #controlNet
   control_connect: True
-  fusion_strategy: "cross_attention" #doesn't matter if control_connect=True
+  #fuse at top
+  fusion: False
   fusion_params:
+    fusion_strategy: "cross_attention" 
     num_heads: 2
     embed_dim: 20 # (in+out)*data_channels
+
+data:
+  mode: "Training"
+  data_dirs: "./data/kol/results_2.h5"
+  total_seq_len: 10
+  rollout_total_seq_len: 600
+  val_downsample_k: 2  # val_downsample_k * rollout_total_seq_len <= total_len * val_ratio
+  train_ratio: 0.8
+  val_ratio: 0.15
+  crop: 0
+  
+training:
+  optim:
+    method: "adamw"
+    lr: 1.0e-3
+    wd: 1.0e-5
+    betas: [0.9, 0.999]
+    gradient_clip_val: 1.0
+    max_epochs: 100
+    loss_type: "l2"
+    # scheduler
+    warmup_percentage: 0.1
+    lr_scheduler_mode: "cosine"
+    min_lr_ratio: 1.0e-3
+    warmup_min_lr_ratio: 0.1
+    # old
+    finetune_epochs: 40
+    finetune_learning_rate: 0.00001  
+    learning_rate: 0.0001
+    epochs: 300
+  batch_size: 2
+
+
+
+
+
+
+
 
 validation:
   n_val_samples: 1
