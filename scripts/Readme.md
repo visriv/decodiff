@@ -27,16 +27,16 @@ Before running the scripts, ensure you have navigated to the project directory a
 
 The following commands demonstrate how to run different types of diffusion models using the provided configuration files.
 
-### ControlNet-based Diffusion (Connected Configuration)
+### ControlNet-based Diffusion (connecting the decoders, like in controlNet )
 
-This uses the `main_distri.py` script with the `diffusion_control_connect.yaml` configuration.
+This uses the `main_distri.py` script with the `diffusion_control_connect.yaml` configuration. (controlNet architecture with denoising objective)
 
 ```bash
 python scripts/main_distri.py --config ./configs/diffusion_control_connect.yaml
 ```
 
-### ControlNet-based Diffusion (Direct Configuration)
-This uses the main_distri_new.py script with the diffusion_control_direct.yaml configuration.
+### ControlNet-based Diffusion (Direct Estimation of signal (aka Score Based Diffusion))
+This uses the main_distri_new.py script with the diffusion_control_direct.yaml configuration. (controlNet architecture with score estimation objective)
 ```bash
 python scripts/main_distri_new.py --config ./configs/diffusion_control_direct.yaml
 ```
