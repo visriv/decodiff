@@ -33,6 +33,20 @@ This uses the `main_distri.py` script with the `diffusion_control_connect.yaml` 
 
 ```bash
 python scripts/main_distri.py --config ./configs/diffusion_control_connect.yaml
-ControlNet-based Diffusion (Direct Configuration)This uses the main_distri_new.py script with the diffusion_control_direct.yaml configuration.python scripts/main_distri_new.py --config ./configs/diffusion_control_direct.yaml
-Vanilla DiffusionThis uses the main_distri_new.py script with the diffusion_single.yaml configuration.python scripts/main_distri_new.py --config ./configs/diffusion_single.yaml
+```
+
+### ControlNet-based Diffusion (Direct Configuration)
+This uses the main_distri_new.py script with the diffusion_control_direct.yaml configuration.
+```bash
+python scripts/main_distri_new.py --config ./configs/diffusion_control_direct.yaml
+```
+
+### Vanilla Diffusion
+
+This uses the main_distri_new.py script with the diffusion_single.yaml configuration.
+
+```bash
+python scripts/main_distri_new.py --config ./configs/diffusion_single.yaml
+```
+
 Note on GPU TrainingDistributed Training: The scripts main_distri.py and main_distri_new.py are intended for distributed training across multiple GPUs. Ensure your environment (e.g., Slurm, torch.distributed.launch) is configured correctly for multi-GPU execution when using these scripts. The specific launch command might vary depending on your setup.Single GPU Training: If you intend
